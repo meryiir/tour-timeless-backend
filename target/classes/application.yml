@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: tourisme-backend
+  
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/tourisme}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:5392}
+    driver-class-name: org.postgresql.Driver
+  
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    open-in-view: false
+  
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: UTC
+  
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:your-256-bit-secret-key-change-this-in-production-minimum-32-characters}
+    expiration: 86400000 # 24 hours in milliseconds
+  
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
+    allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS
+    allowed-headers: "*"
+    allow-credentials: true
+  
+  upload:
+    dir: ${UPLOAD_DIR:uploads}
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+logging:
+  level:
+    com.tourisme: DEBUG
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
