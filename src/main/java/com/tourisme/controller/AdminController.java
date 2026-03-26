@@ -1,20 +1,37 @@
 package com.tourisme.controller;
 
 import com.tourisme.dto.request.ActivityRequest;
+import com.tourisme.dto.request.ContactMessageReplyRequest;
 import com.tourisme.dto.request.DestinationRequest;
 import com.tourisme.dto.response.*;
 import com.tourisme.entity.Booking;
-import com.tourisme.service.*;
+import com.tourisme.service.ActivityService;
+import com.tourisme.service.ContactMessageService;
+import com.tourisme.service.BackupImportService;
+import com.tourisme.service.BackupService;
+import com.tourisme.service.BookingService;
+import com.tourisme.service.DashboardService;
+import com.tourisme.service.DestinationService;
+import com.tourisme.service.FileStorageService;
+import com.tourisme.service.PostgresDataDumpService;
+import com.tourisme.service.ReviewService;
+import com.tourisme.service.SettingsService;
+import com.tourisme.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -31,6 +48,10 @@ public class AdminController {
     private final SettingsService settingsService;
     private final DashboardService dashboardService;
     private final FileStorageService fileStorageService;
+    private final BackupService backupService;
+    private final BackupImportService backupImportService;
+    private final PostgresDataDumpService postgresDataDumpService;
+    private final ContactMessageService contactMessageService;
     
     // Users
     @GetMapping("/users")
@@ -67,6 +88,11 @@ public class AdminController {
     }
     
     // Destinations
+    @GetMapping("/destinations/{id}")
+    public ResponseEntity<DestinationResponse> getDestinationForAdmin(@PathVariable Long id) {
+        return ResponseEntity.ok(destinationService.getDestinationForAdmin(id));
+    }
+
     @PostMapping("/destinations")
     public ResponseEntity<DestinationResponse> createDestination(
             @Valid @RequestBody DestinationRequest request) {
@@ -88,6 +114,20 @@ public class AdminController {
     }
     
     // Activities
+    @GetMapping("/activities")
+    public ResponseEntity<Page<ActivityResponse>> getAllActivities(
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.getAllActivitiesForAdmin(pageable, lang));
+    }
+    
+    @GetMapping("/activities/{id}")
+    public ResponseEntity<ActivityResponse> getActivityById(
+            @PathVariable Long id,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.getActivityByIdForAdmin(id, lang));
+    }
+    
     @PostMapping("/activities")
     public ResponseEntity<ActivityResponse> createActivity(
             @Valid @RequestBody ActivityRequest request) {
@@ -140,6 +180,13 @@ public class AdminController {
         return ResponseEntity.noContent().build();
     }
     
+    @GetMapping("/users/{id}/bookings")
+    public ResponseEntity<Page<BookingResponse>> getUserBookings(
+            @PathVariable Long id,
+            @PageableDefault(size = 20) Pageable pageable) {
+        return ResponseEntity.ok(bookingService.getBookingsByUserId(id, pageable));
+    }
+    
     // Reviews
     @GetMapping("/reviews")
     public ResponseEntity<Page<ReviewResponse>> getAllReviews(
@@ -163,7 +210,38 @@ public class AdminController {
         return ResponseEntity.noContent().build();
     }
     
+    // Contact messages (website form)
+    @GetMapping("/contact-messages")
+    public ResponseEntity<Page<ContactMessageResponse>> getContactMessages(
+            @PageableDefault(size = 20) Pageable pageable) {
+        return ResponseEntity.ok(contactMessageService.findAllForAdmin(pageable));
+    }
+    
+    @PatchMapping("/contact-messages/{id}/read")
+    public ResponseEntity<ContactMessageResponse> markContactMessageRead(@PathVariable Long id) {
+        return ResponseEntity.ok(contactMessageService.markRead(id));
+    }
+    
+    @DeleteMapping("/contact-messages/{id}")
+    public ResponseEntity<Void> deleteContactMessage(@PathVariable Long id) {
+        contactMessageService.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+    
+    @PostMapping("/contact-messages/{id}/reply")
+    public ResponseEntity<ContactMessageResponse> replyToContactMessage(
+            @PathVariable Long id,
+            @Valid @RequestBody ContactMessageReplyRequest request) {
+        return ResponseEntity.ok(contactMessageService.reply(id, request));
+    }
+    
     // Settings
+    @GetMapping("/settings")
+    public ResponseEntity<SettingsResponse> getSettings(
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(settingsService.getSettings(lang));
+    }
+    
     @PutMapping("/settings")
     public ResponseEntity<SettingsResponse> updateSettings(
             @RequestParam(required = false) String siteName,
@@ -176,17 +254,52 @@ public class AdminController {
             @RequestParam(required = false) String twitterUrl,
             @RequestParam(required = false) String youtubeUrl,
             @RequestParam(required = false) String bannerTitle,
-            @RequestParam(required = false) String bannerSubtitle) {
+            @RequestParam(required = false) String bannerSubtitle,
+            @RequestBody(required = false) java.util.List<com.tourisme.dto.request.SettingsTranslationRequest> translations) {
         return ResponseEntity.ok(settingsService.updateSettings(
                 siteName, logoUrl, contactEmail, contactPhone, address,
                 facebookUrl, instagramUrl, twitterUrl, youtubeUrl,
-                bannerTitle, bannerSubtitle));
+                bannerTitle, bannerSubtitle, translations));
     }
     
     // Dashboard
     @GetMapping("/dashboard/stats")
     public ResponseEntity<DashboardStatsResponse> getDashboardStats() {
         return ResponseEntity.ok(dashboardService.getDashboardStats());
+    }
+    
+    /** Full JSON snapshot (passwords redacted). Admin only. */
+    @GetMapping("/backup/export")
+    public ResponseEntity<byte[]> exportBackup() throws Exception {
+        byte[] data = backupService.exportJsonPretty();
+        String filename = "tourisme-backup-" + LocalDate.now() + ".json";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(data);
+    }
+    
+    /**
+     * PostgreSQL data-only SQL (pg_dump). Requires {@code pg_dump} on the server host; configure {@code app.backup.pg-dump-path} if needed.
+     */
+    @GetMapping("/backup/postgres-data")
+    public ResponseEntity<byte[]> exportPostgresData(
+            @RequestParam(value = "useInserts", defaultValue = "false") boolean useInserts) {
+        byte[] data = postgresDataDumpService.dumpDataOnlyPlainSql(useInserts);
+        String stamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss"));
+        String filename = "tourisme-data-" + stamp + ".sql";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType("application/sql"))
+                .body(data);
+    }
+    
+    @PostMapping(value = "/backup/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<BackupImportResultResponse> importBackup(
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(value = "replaceExisting", defaultValue = "true") boolean replaceExisting,
+            @RequestParam(value = "defaultPassword", required = false) String defaultPassword) throws Exception {
+        return ResponseEntity.ok(backupImportService.importFromJson(file, replaceExisting, defaultPassword));
     }
     
     // File Upload

@@ -22,4 +22,10 @@ public class BookingRequest {
     private Integer numberOfPeople;
     
     private String specialRequest;
+    
+    /** Client UI: {@code shared} or {@code private}. Legacy: {@code premium} still applies old 1.6× base price. */
+    private String tourType;
+    
+    /** Client UI: {@code standard} or {@code luxury} (optional, default standard). */
+    private String comfortLevel;
 }

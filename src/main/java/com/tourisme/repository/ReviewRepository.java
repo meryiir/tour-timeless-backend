@@ -13,6 +13,9 @@ import java.util.Optional;
 @Repository
 public interface ReviewRepository extends JpaRepository<Review, Long> {
     Page<Review> findByActivityIdAndApprovedTrue(Long activityId, Pageable pageable);
+
+    Page<Review> findByApprovedTrueOrderByCreatedAtDesc(Pageable pageable);
+
     Page<Review> findByApprovedFalse(Pageable pageable);
     Optional<Review> findByUserIdAndActivityId(Long userId, Long activityId);
     

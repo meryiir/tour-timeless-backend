@@ -8,6 +8,8 @@ import lombok.NoArgsConstructor;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "settings")
@@ -53,6 +55,10 @@ public class Settings {
     
     @Column(length = 500)
     private String bannerSubtitle;
+    
+    @OneToMany(mappedBy = "settings", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<SettingsTranslation> translations = new ArrayList<>();
     
     @UpdateTimestamp
     @Column(nullable = false)

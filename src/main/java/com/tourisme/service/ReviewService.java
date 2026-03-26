@@ -62,14 +62,22 @@ public class ReviewService {
         return reviewMapper.toResponse(review);
     }
     
+    @Transactional(readOnly = true)
     public Page<ReviewResponse> getActivityReviews(Long activityId, Pageable pageable) {
         return reviewRepository.findByActivityIdAndApprovedTrue(activityId, pageable)
                 .map(reviewMapper::toResponse);
     }
     
+    @Transactional(readOnly = true)
     public Page<ReviewResponse> getAllReviews(Pageable pageable) {
         return reviewRepository.findAll(pageable)
                 .map(reviewMapper::toResponse);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<ReviewResponse> getRecentApprovedReviews(Pageable pageable, String languageCode) {
+        return reviewRepository.findByApprovedTrueOrderByCreatedAtDesc(pageable)
+                .map(r -> reviewMapper.toResponse(r, languageCode));
     }
     
     @Transactional

@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 
 @Service
@@ -31,6 +32,7 @@ public class BookingService {
     private final UserRepository userRepository;
     private final ActivityRepository activityRepository;
     private final BookingMapper bookingMapper;
+    private final UserNotificationService userNotificationService;
     
     private User getCurrentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -53,7 +55,10 @@ public class BookingService {
             throw new BadRequestException("Number of people exceeds maximum group size");
         }
         
-        BigDecimal totalPrice = activity.getPrice().multiply(BigDecimal.valueOf(request.getNumberOfPeople()));
+        BigDecimal pricePerPerson = computePricePerPerson(activity, request);
+        BigDecimal totalPrice = pricePerPerson
+                .multiply(BigDecimal.valueOf(request.getNumberOfPeople()))
+                .setScale(2, RoundingMode.HALF_UP);
         
         String bookingReference;
         do {
@@ -76,12 +81,14 @@ public class BookingService {
         return bookingMapper.toResponse(booking);
     }
     
+    @Transactional(readOnly = true)
     public Page<BookingResponse> getMyBookings(Pageable pageable) {
         User user = getCurrentUser();
         return bookingRepository.findByUserId(user.getId(), pageable)
                 .map(bookingMapper::toResponse);
     }
     
+    @Transactional(readOnly = true)
     public BookingResponse getBookingById(Long id) {
         User user = getCurrentUser();
         Booking booking = bookingRepository.findById(id)
@@ -95,8 +102,17 @@ public class BookingService {
         return bookingMapper.toResponse(booking);
     }
     
+    @Transactional(readOnly = true)
     public Page<BookingResponse> getAllBookings(Pageable pageable) {
-        return bookingRepository.findAll(pageable)
+        return bookingRepository.findAll(pageable).map(bookingMapper::toResponse);
+    }
+    
+    @Transactional(readOnly = true)
+    public Page<BookingResponse> getBookingsByUserId(Long userId, Pageable pageable) {
+        if (!userRepository.existsById(userId)) {
+            throw new ResourceNotFoundException("User not found with id: " + userId);
+        }
+        return bookingRepository.findByUserId(userId, pageable)
                 .map(bookingMapper::toResponse);
     }
     
@@ -105,8 +121,12 @@ public class BookingService {
         Booking booking = bookingRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + id));
         
+        Booking.BookingStatus previous = booking.getStatus();
         booking.setStatus(status);
         booking = bookingRepository.save(booking);
+        if (previous != status) {
+            userNotificationService.notifyBookingStatus(booking.getUser(), booking, status);
+        }
         return bookingMapper.toResponse(booking);
     }
     
@@ -116,5 +136,44 @@ public class BookingService {
             throw new ResourceNotFoundException("Booking not found with id: " + id);
         }
         bookingRepository.deleteById(id);
+    }
+    
+    /**
+     * Matches {@code ActivityDetailPage} pricing: budget/premium columns, private +30%, luxury vs standard.
+     */
+    static BigDecimal computePricePerPerson(Activity activity, BookingRequest request) {
+        BigDecimal basePrice = activity.getPrice();
+        BigDecimal premiumPrice = activity.getPremiumPrice() != null
+                ? activity.getPremiumPrice()
+                : basePrice.multiply(new BigDecimal("1.6"));
+        BigDecimal budgetPrice = activity.getBudgetPrice() != null
+                ? activity.getBudgetPrice()
+                : basePrice;
+
+        String tour = request.getTourType() == null ? "" : request.getTourType().trim();
+        String comfort = request.getComfortLevel() == null ? "" : request.getComfortLevel().trim();
+
+        if ("premium".equalsIgnoreCase(tour)) {
+            return activity.getPrice().multiply(new BigDecimal("1.6")).setScale(2, RoundingMode.HALF_UP);
+        }
+
+        boolean isPrivate = "private".equalsIgnoreCase(tour);
+        boolean isLuxury = "luxury".equalsIgnoreCase(comfort);
+
+        BigDecimal perPerson;
+        if (isPrivate) {
+            if (isLuxury) {
+                perPerson = premiumPrice.multiply(new BigDecimal("1.3"));
+            } else {
+                perPerson = budgetPrice.multiply(new BigDecimal("1.3"));
+            }
+        } else {
+            if (isLuxury) {
+                perPerson = premiumPrice;
+            } else {
+                perPerson = budgetPrice;
+            }
+        }
+        return perPerson.setScale(2, RoundingMode.HALF_UP);
     }
 }

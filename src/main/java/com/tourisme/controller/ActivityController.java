@@ -22,31 +22,38 @@ public class ActivityController {
     
     @GetMapping
     public ResponseEntity<Page<ActivityResponse>> getAllActivities(
-            @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(activityService.getAllActivities(pageable));
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.getAllActivities(pageable, lang));
     }
     
     @GetMapping("/{id}")
-    public ResponseEntity<ActivityResponse> getActivityById(@PathVariable Long id) {
-        return ResponseEntity.ok(activityService.getActivityById(id));
+    public ResponseEntity<ActivityResponse> getActivityById(
+            @PathVariable Long id,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.getActivityById(id, lang));
     }
     
     @GetMapping("/slug/{slug}")
-    public ResponseEntity<ActivityResponse> getActivityBySlug(@PathVariable String slug) {
-        return ResponseEntity.ok(activityService.getActivityBySlug(slug));
+    public ResponseEntity<ActivityResponse> getActivityBySlug(
+            @PathVariable String slug,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.getActivityBySlug(slug, lang));
     }
     
     @GetMapping("/featured")
     public ResponseEntity<Page<ActivityResponse>> getFeaturedActivities(
-            @PageableDefault(size = 10) Pageable pageable) {
-        return ResponseEntity.ok(activityService.getFeaturedActivities(pageable));
+            @PageableDefault(size = 10) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.getFeaturedActivities(pageable, lang));
     }
     
     @GetMapping("/search")
     public ResponseEntity<Page<ActivityResponse>> searchActivities(
             @RequestParam String keyword,
-            @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(activityService.searchActivities(keyword, pageable));
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(activityService.searchActivities(keyword, pageable, lang));
     }
     
     @GetMapping("/filter")
@@ -58,9 +65,10 @@ public class ActivityController {
             @RequestParam(required = false) BigDecimal minRating,
             @RequestParam(required = false) Activity.DifficultyLevel difficulty,
             @RequestParam(required = false) Boolean featured,
-            @PageableDefault(size = 20) Pageable pageable) {
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
         return ResponseEntity.ok(activityService.filterActivities(
-                destinationId, category, minPrice, maxPrice, minRating, difficulty, featured, pageable));
+                destinationId, category, minPrice, maxPrice, minRating, difficulty, featured, pageable, lang));
     }
     
     @GetMapping("/categories")

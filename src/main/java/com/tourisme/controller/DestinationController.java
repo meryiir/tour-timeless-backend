@@ -18,17 +18,22 @@ public class DestinationController {
     
     @GetMapping
     public ResponseEntity<Page<DestinationResponse>> getAllDestinations(
-            @PageableDefault(size = 20) Pageable pageable) {
-        return ResponseEntity.ok(destinationService.getAllDestinations(pageable));
+            @PageableDefault(size = 20) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(destinationService.getAllDestinations(pageable, lang));
     }
     
     @GetMapping("/{id}")
-    public ResponseEntity<DestinationResponse> getDestinationById(@PathVariable Long id) {
-        return ResponseEntity.ok(destinationService.getDestinationById(id));
+    public ResponseEntity<DestinationResponse> getDestinationById(
+            @PathVariable Long id,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(destinationService.getDestinationById(id, lang));
     }
     
     @GetMapping("/slug/{slug}")
-    public ResponseEntity<DestinationResponse> getDestinationBySlug(@PathVariable String slug) {
-        return ResponseEntity.ok(destinationService.getDestinationBySlug(slug));
+    public ResponseEntity<DestinationResponse> getDestinationBySlug(
+            @PathVariable String slug,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(destinationService.getDestinationBySlug(slug, lang));
     }
 }

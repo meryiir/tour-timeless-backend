@@ -19,7 +19,8 @@ import java.util.List;
     @Index(name = "idx_activity_slug", columnList = "slug", unique = true),
     @Index(name = "idx_activity_destination", columnList = "destination_id"),
     @Index(name = "idx_activity_featured", columnList = "featured"),
-    @Index(name = "idx_activity_active", columnList = "active")
+    @Index(name = "idx_activity_active", columnList = "active"),
+    @Index(name = "idx_activity_tour_type", columnList = "tour_type")
 })
 @Data
 @NoArgsConstructor
@@ -46,6 +47,12 @@ public class Activity {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal price;
     
+    @Column(precision = 10, scale = 2)
+    private BigDecimal premiumPrice;
+    
+    @Column(precision = 10, scale = 2)
+    private BigDecimal budgetPrice;
+    
     @Column(length = 50)
     private String duration;
     
@@ -58,6 +65,11 @@ public class Activity {
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private DifficultyLevel difficultyLevel;
+    
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private TourType tourType = TourType.SHARED;
     
     @Column(nullable = false, precision = 3, scale = 2)
     @Builder.Default
@@ -156,6 +168,10 @@ public class Activity {
     @Builder.Default
     private List<Favorite> favorites = new ArrayList<>();
     
+    @OneToMany(mappedBy = "activity", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<ActivityTranslation> translations = new ArrayList<>();
+    
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -169,5 +185,10 @@ public class Activity {
         MODERATE,
         HARD,
         EXTREME
+    }
+    
+    public enum TourType {
+        PRIVATE,
+        SHARED
     }
 }

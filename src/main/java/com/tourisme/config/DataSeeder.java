@@ -5,6 +5,7 @@ import com.tourisme.repository.*;
 import com.tourisme.util.BookingReferenceUtil;
 import com.tourisme.util.SlugUtil;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -14,7 +15,11 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -22,24 +27,223 @@ public class DataSeeder implements CommandLineRunner {
     
     private final UserRepository userRepository;
     private final DestinationRepository destinationRepository;
+    private final DestinationPageCardRepository destinationPageCardRepository;
     private final ActivityRepository activityRepository;
+    private final ActivityTranslationRepository activityTranslationRepository;
     private final BookingRepository bookingRepository;
     private final ReviewRepository reviewRepository;
     private final FavoriteRepository favoriteRepository;
     private final SettingsRepository settingsRepository;
     private final PasswordEncoder passwordEncoder;
-    
+
+    /**
+     * When false, {@link CommandLineRunner#run} returns immediately — no seed logic runs (PostgreSQL is untouched by this component).
+     */
+    @Value("${app.seeding.run-on-startup:true}")
+    private boolean runSeedingOnStartup;
+
+    /**
+     * When false (default), Tour-in-Morocco reference copy is not re-applied on every startup, so DB content persists across restarts.
+     */
+    @Value("${app.seeding.apply-tour-in-morocco-reference:false}")
+    private boolean applyTourInMoroccoReference;
+
+    /** When false (default), Sahara keyword–matched activities are not re-assigned to the Sahara destination on each start. */
+    @Value("${app.seeding.relink-sahara-activities:false}")
+    private boolean relinkSaharaActivities;
+
+    /** When false (default), inactive activities stay inactive after restart (admin “deactivate” is respected). */
+    @Value("${app.seeding.reactivate-all-activities:false}")
+    private boolean reactivateAllActivities;
+
+    /**
+     * When false (default), destinations removed in admin are not recreated on startup (fixes “delete comes back” after restart).
+     * When true, missing Marrakech/Sahara/Ouzoud and default Marrakech page cards are re-inserted like older seeders.
+     */
+    @Value("${app.seeding.recreate-missing-default-destinations:false}")
+    private boolean recreateMissingDefaultDestinations;
+
+    /**
+     * When true, {@link #seedOuzoudWaterfallsIfNeeded()} and {@link #seedOurikaValleyIfNeeded()} run for non-empty DBs if those slugs are missing.
+     * Default false: deleted catalog destinations stay deleted. Empty DB still seeds Ouzoud/Ourika once in the initial block.
+     */
+    @Value("${app.seeding.seed-catalog-day-trip-destinations:false}")
+    private boolean seedCatalogDayTripDestinations;
+
+    /**
+     * Copy aligned with https://www.tour-in-morocco.com/tour-destination/ouzoud-waterfalls/
+     */
+    private static final String OUZOUD_TOUR_IN_MOROCCO_INTRO =
+            "The people of this country are super friendly and welcoming. Tour in Morocco invites you to come and explore the pristine beauty of this country, Sahara, Mountains, and Beaches. For your convenience, we have designed and tailor-made amazing Moroccan trip packages and Sahara desert Tours. Let us take care of all the worries of your trips and tours to Morocco.";
+
+    /** Main listing paragraph from the reference “Marrakech Day Trip to Ouzoud Waterfalls” card (ellipsis on site completed for our app). */
+    private static final String OUZOUD_REFERENCE_LISTING_PARAGRAPH =
+            "150 kilometers from Marrakech, the Ouzoud waterfalls constitute a breathtaking landscape. It is not for nothing that the waterfalls are classified as one of the most beautiful sites in Morocco! Nestled in the heart of lush greenery, there are 3 waterfalls, the highest of which reaches 110 meters high! After 1h30 by car, we arrive at Ouzoud.";
+
+    private static final String OUZOUD_DESTINATION_SHORT = OUZOUD_REFERENCE_LISTING_PARAGRAPH;
+
+    private static final String OUZOUD_DESTINATION_FULL =
+            OUZOUD_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + OUZOUD_REFERENCE_LISTING_PARAGRAPH
+                    + " Walk the footpaths along the El Abid River gorge, take in the viewpoints above the cascades, watch Barbary macaques in the olive groves, and enjoy optional boat rides and lunch with a view before returning to Marrakech.";
+
+    private static final String OUZOUD_ACTIVITY_SHORT =
+            OUZOUD_REFERENCE_LISTING_PARAGRAPH
+                    + " Spend the day exploring the falls, the village, and the surrounding nature on this Marrakech day trip.";
+
+    private static final String OUZOUD_ACTIVITY_FULL =
+            OUZOUD_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + OUZOUD_REFERENCE_LISTING_PARAGRAPH
+                    + "\n\n"
+                    + "Morning pick-up in Marrakech and scenic drive through the Middle Atlas foothills. At Ouzoud, follow marked trails to upper and lower viewpoints, feel the spray from the main cascades, and photograph the rainbows on sunny days. Free time for lunch at a terrace restaurant, optional boat trips at the base of the falls, and relaxed wandering before the return transfer to Marrakech.";
+
+    /**
+     * Copy aligned with https://www.tour-in-morocco.com/tour-destination/ourika-valley/
+     */
+    private static final String OURIKA_TOUR_IN_MOROCCO_INTRO = OUZOUD_TOUR_IN_MOROCCO_INTRO;
+
+    private static final String OURIKA_DESTINATION_SHORT =
+            "Ourika Valley, Atlas Mountains — Marrakech day trips from riverside walks and Berber villages to mint tea in the foothills.";
+
+    private static final String OURIKA_DESTINATION_FULL =
+            OURIKA_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + "Ourika Valley lies in the High Atlas foothills near Marrakech — a green corridor of terraced fields, argan trees, and Berber villages along the Ourika River. Choose a relaxed day by the water, a stroll through Setti Fatma, or combine with wider Atlas and “three valleys” routes.\n\n"
+                    + "The Atlas Mountains are in fact three distinct ranges that run in bands across Morocco’s interior, dividing it into strips of lower-lying land. Furthest north is the Middle Atlas, while the southerly range is the Anti-Atlas that helps hold back the Western Sahara — with the High Atlas rising between, framing valleys like Ourika for unforgettable day trips.";
+
+    private static final String OURIKA_3_VALLEYS_LISTING =
+            "The Atlas Mountains are in fact three distinct ranges that run in bands across Morocco’s interior, dividing it into strips of lower-lying land. Furthest north in the Middle Atlas, while the southerly range is the Anti Atlas that attempt to keep desolate Western Sahara at bay.";
+
+    private static final String OURIKA_3_VALLEYS_ACTIVITY_SHORT = OURIKA_3_VALLEYS_LISTING;
+
+    private static final String OURIKA_3_VALLEYS_ACTIVITY_FULL =
+            OURIKA_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + OURIKA_3_VALLEYS_LISTING
+                    + "\n\n"
+                    + "This adventure-style day trip crosses dramatic High Atlas scenery and explores multiple valley characters — from forested slopes to rocky gorges — with photo stops and time to feel the scale of the range on a route designed for wide landscapes and big skies.";
+
+    private static final String OURIKA_DAY_TRIP_LISTING =
+            "In the High Atlas Mountains, we can plan walks of all lengths and difficulties, from short meanders through the lower valleys with mint tea in a Berber home, to multi-day hikes over some of the higher peaks in the region. We can arrange anything from short breaks to longer explorations of the country’s varied regions.";
+
+    private static final String OURIKA_DAY_TRIP_ACTIVITY_SHORT =
+            OURIKA_DAY_TRIP_LISTING
+                    + " The Ourika Valley is the classic Marrakech escape — easy to reach and rich in Berber culture.";
+
+    private static final String OURIKA_DAY_TRIP_ACTIVITY_FULL =
+            OURIKA_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + OURIKA_DAY_TRIP_LISTING
+                    + "\n\n"
+                    + "On this private-oriented Marrakech day trip, wind up the Ourika road with stops at viewpoints, a walk along the river, optional hike toward the Setti Fatma waterfalls, and lunch in a terrace restaurant or guesthouse. Share mint tea with a local family, browse village stalls for argan and crafts, and return to Marrakech in the evening.";
+
     @Override
     @Transactional
     public void run(String... args) {
+        if (!runSeedingOnStartup) {
+            System.out.println("DataSeeder skipped (app.seeding.run-on-startup=false). PostgreSQL data is not modified by the seeder.");
+            return;
+        }
+
         // Only seed users if database is empty
         if (userRepository.count() == 0) {
             seedUsers();
         }
         
-        // Always seed destinations and activities (will skip if already exist due to unique constraints)
-        seedDestinations();
-        seedActivities();
+        // Destinations: first install (empty DB) gets full defaults including Ouzoud/Ourika once.
+        // Existing DB: no core re-seed unless recreate-missing-default-destinations=true.
+        long destinationCount = destinationRepository.count();
+        if (destinationCount == 0) {
+            seedDestinations();
+            ensureMarrakechPageCardsIfNeeded();
+            seedOuzoudWaterfallsIfNeeded();
+            seedOurikaValleyIfNeeded();
+        } else if (recreateMissingDefaultDestinations) {
+            seedSaharaDesertIfNeeded();
+            ensureMarrakechPageCardsIfNeeded();
+            seedOuzoudWaterfallsIfNeeded();
+            seedOurikaValleyIfNeeded();
+        } else {
+            System.out.println("Skipping core default destination auto-seed (" + destinationCount
+                    + " destination(s) in DB). Set app.seeding.recreate-missing-default-destinations=true to re-create missing Marrakech/Sahara/cards.");
+        }
+
+        if (destinationCount > 0 && seedCatalogDayTripDestinations) {
+            seedOuzoudWaterfallsIfNeeded();
+            seedOurikaValleyIfNeeded();
+        }
+
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination marrakech = destinations.stream().filter(d -> d.getName().equals("Marrakech")).findFirst().orElse(null);
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+
+        if (marrakech == null) {
+            if (recreateMissingDefaultDestinations) {
+                System.out.println("Marrakech destination not found, creating it...");
+                seedDestinations();
+                destinations = destinationRepository.findAll();
+                marrakech = destinations.stream().filter(d -> d.getName().equals("Marrakech")).findFirst().orElse(null);
+            } else {
+                System.out.println("Marrakech destination not found — not auto-creating (restore via admin or set app.seeding.recreate-missing-default-destinations=true).");
+            }
+        }
+
+        if (saharaDesert == null) {
+            if (recreateMissingDefaultDestinations) {
+                System.out.println("Sahara Desert destination not found, creating it...");
+                seedSaharaDesertIfNeeded();
+                destinations = destinationRepository.findAll();
+                saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+            } else {
+                System.out.println("Sahara Desert destination not found — not auto-creating (restore via admin or set app.seeding.recreate-missing-default-destinations=true).");
+            }
+        }
+        
+        long activityCount = activityRepository.count();
+        System.out.println("Current activity count: " + activityCount);
+        
+        if (activityCount == 0) {
+            System.out.println("No activities found, seeding all activities...");
+            if (marrakech == null || saharaDesert == null) {
+                System.out.println("ERROR: Cannot seed activities - missing destinations!");
+                System.out.println("Marrakech: " + (marrakech != null ? "exists" : "MISSING"));
+                System.out.println("Sahara Desert: " + (saharaDesert != null ? "exists" : "MISSING"));
+            } else {
+                seedActivities();
+                // Also seed all the other activities
+                System.out.println("Seeding additional activities...");
+                seed4DaysTour(saharaDesert);
+                seed4DaysDesertTripFromMarrakesh(saharaDesert);
+                seed3DaysDesertTripFromMarrakechToFes(saharaDesert);
+                seed3DaySaharaDesertTourFromMarrakech(saharaDesert);
+                seed2DayDesertTourFromMarrakech(saharaDesert);
+                System.out.println("Finished seeding activities. New count: " + activityRepository.count());
+            }
+        } else {
+            if (relinkSaharaActivities) {
+                System.out.println("Updating Sahara Desert activities destination (app.seeding.relink-sahara-activities=true)...");
+                updateSaharaDesertActivitiesDestination();
+            }
+            // Ensure 4-day tour exists even if other activities are present
+            seed4DaysTourIfNeeded();
+            // Ensure 4 Days Desert Trip from Marrakesh exists
+            seed4DaysDesertTripFromMarrakeshIfNeeded();
+            // Ensure 3 Day Sahara Desert Trip from Marrakech to Fes exists
+            seed3DaysDesertTripFromMarrakechToFesIfNeeded();
+            // Ensure 3 Day Sahara Desert Tour from Marrakech exists
+            seed3DaySaharaDesertTourFromMarrakechIfNeeded();
+            // Ensure 2 Day Desert Tour from Marrakech exists
+            seed2DayDesertTourFromMarrakechIfNeeded();
+            if (reactivateAllActivities) {
+                System.out.println("Re-activating inactive activities (app.seeding.reactivate-all-activities=true)...");
+                ensureAllActivitiesAreActive();
+            }
+        }
+
+        seedOuzoudMarrakechDayTripActivityIfNeeded();
+        seedOurikaValleyActivitiesIfNeeded();
         
         // Only seed other data if database is empty
         if (userRepository.count() > 0 && bookingRepository.count() == 0) {
@@ -53,6 +257,28 @@ public class DataSeeder implements CommandLineRunner {
             seedFavorites();
             seedSettings();
         }
+        
+        if (applyTourInMoroccoReference) {
+            applyTourInMoroccoSaharaDestinationPageReference();
+            applyTourInMoroccoOuzoudDestinationPageReference();
+        }
+        
+        // Log summary
+        System.out.println("=== Seeder Summary ===");
+        System.out.println("Destinations: " + destinationRepository.count());
+        System.out.println("Activities: " + activityRepository.count());
+        System.out.println("Active Activities: " + activityRepository.findAll().stream()
+                .filter(a -> a.getActive() != null && a.getActive()).count());
+        List<Destination> allDests = destinationRepository.findAll();
+        for (Destination dest : allDests) {
+            long destActivityCount = activityRepository.findAll().stream()
+                    .filter(a -> a.getDestination() != null && 
+                            a.getDestination().getId().equals(dest.getId()) &&
+                            a.getActive() != null && a.getActive())
+                    .count();
+            System.out.println("  - " + dest.getName() + ": " + destActivityCount + " activities");
+        }
+        System.out.println("=====================");
     }
     
     private void seedUsers() {
@@ -120,1280 +346,1732 @@ public class DataSeeder implements CommandLineRunner {
     }
     
     private void seedDestinations() {
-        List<Destination> existingDestinations = destinationRepository.findAll();
-        List<String> existingNames = existingDestinations.stream()
-                .map(Destination::getName)
-                .collect(java.util.stream.Collectors.toList());
+        // Seed Marrakech
+        String slug = SlugUtil.generateSlug("Marrakech");
+        Destination destination = destinationRepository.findBySlug(slug).orElse(null);
         
-        List<Destination> destinations = new ArrayList<>(Arrays.asList(
-                Destination.builder()
-                        .name("Sahara Desert")
-                        .slug(SlugUtil.generateSlug("Sahara Desert"))
-                        .shortDescription("Experience the breathtaking beauty of the world's largest hot desert")
-                        .fullDescription("The Sahara Desert offers an unforgettable adventure with its endless dunes, starry nights, and rich Berber culture. Explore ancient oases, ride camels at sunset, and camp under the stars in this magnificent landscape. Our Sahara Desert Tours will take you into the heart of Morocco to discover the authenticity and hospitality of the people.")
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .country("Morocco")
-                        .city("Merzouga")
-                        .featured(true)
-                        .build(),
-                Destination.builder()
-                        .name("Marrakech")
-                        .slug(SlugUtil.generateSlug("Marrakech"))
-                        .shortDescription("Discover the vibrant Red City with its bustling souks and historic palaces")
-                        .fullDescription("Marrakech, the Red City, is a feast for the senses. Wander through the maze-like medina, visit the stunning Bahia Palace, experience the vibrant Jemaa el-Fnaa square, and indulge in authentic Moroccan cuisine. The home to some of the most extraordinary structures including the beautiful fortified Kasbahs and Medina Palaces.")
-                        .imageUrl("https://images.unsplash.com/photo-1539650116574-75c0c6d73a6e?w=1200")
-                        .country("Morocco")
-                        .city("Marrakech")
-                        .featured(true)
-                        .build(),
-                Destination.builder()
-                        .name("Atlas Mountains")
-                        .slug(SlugUtil.generateSlug("Atlas Mountains"))
-                        .shortDescription("Trek through stunning mountain ranges and traditional Berber villages")
-                        .fullDescription("The Atlas Mountains offer spectacular hiking opportunities through rugged peaks, lush valleys, and traditional Berber villages. Experience authentic mountain culture and breathtaking panoramic views. Explore the High Atlas Mountains and 3 Valleys on our day trips from Marrakech.")
-                        .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
-                        .country("Morocco")
-                        .city("Toubkal")
-                        .featured(true)
-                        .build(),
-                Destination.builder()
-                        .name("Ouzoud Waterfalls")
-                        .slug(SlugUtil.generateSlug("Ouzoud Waterfalls"))
-                        .shortDescription("Marvel at Morocco's most spectacular waterfalls")
-                        .fullDescription("The Ouzoud Waterfalls are among the most beautiful natural attractions in Morocco. Located in the Middle Atlas Mountains, these cascading falls offer stunning views, boat rides, and opportunities to swim in the natural pools. Experience the beauty of nature and enjoy a day trip from Marrakech to these magnificent waterfalls.")
-                        .imageUrl("https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=1200")
-                        .country("Morocco")
-                        .city("Ouzoud")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Ourika Valley")
-                        .slug(SlugUtil.generateSlug("Ourika Valley"))
-                        .shortDescription("Explore the beautiful valley with traditional Berber villages")
-                        .fullDescription("The Ourika Valley is a stunning destination just outside Marrakech, known for its lush landscapes, traditional Berber villages, and the beautiful Ourika River. Visit local markets, enjoy traditional mint tea with Berber families, and experience the authentic mountain culture of Morocco.")
-                        .imageUrl("https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=1200")
-                        .country("Morocco")
-                        .city("Ourika")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Marrakech Palm Grove")
-                        .slug(SlugUtil.generateSlug("Marrakech Palm Grove"))
-                        .shortDescription("Discover the peaceful palm grove surrounding Marrakech")
-                        .fullDescription("The Marrakech Palm Grove is a vast oasis of palm trees surrounding the city, offering a peaceful escape from the bustling medina. Enjoy camel rides, quad biking, or simply relax in this beautiful natural setting.")
-                        .imageUrl("https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=1200")
-                        .country("Morocco")
-                        .city("Marrakech")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Essaouira")
-                        .slug(SlugUtil.generateSlug("Essaouira"))
-                        .shortDescription("Coastal gem with historic medina and beautiful beaches")
-                        .fullDescription("Essaouira is a charming coastal city known for its fortified medina, beautiful beaches, and vibrant arts scene. Explore the historic port, enjoy fresh seafood, and experience the laid-back atmosphere of this UNESCO World Heritage site.")
-                        .imageUrl("https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=1200")
-                        .country("Morocco")
-                        .city("Essaouira")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Berber Villages")
-                        .slug(SlugUtil.generateSlug("Berber Villages"))
-                        .shortDescription("Experience authentic Berber culture in traditional mountain villages")
-                        .fullDescription("The Berber Villages in the Atlas Mountains offer an authentic glimpse into traditional Moroccan life. Visit local families, learn about their customs, enjoy traditional meals, and experience the warm hospitality of the Berber people in their mountain homes.")
-                        .imageUrl("https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=1200")
-                        .country("Morocco")
-                        .city("Atlas Mountains")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Agafay Desert")
-                        .slug(SlugUtil.generateSlug("Agafay Desert"))
-                        .shortDescription("Stone desert near Marrakech offering unique desert experiences")
-                        .fullDescription("The Agafay Desert is a unique stone desert located just outside Marrakech, offering a different desert experience from the Sahara. Enjoy camel rides, quad biking, luxury desert camps, and stunning views of the Atlas Mountains. Perfect for a day trip from Marrakech.")
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .country("Morocco")
-                        .city("Agafay")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Fes")
-                        .slug(SlugUtil.generateSlug("Fes"))
-                        .shortDescription("Explore the ancient imperial city and its historic medina")
-                        .fullDescription("Fes is Morocco's cultural and spiritual capital, home to the world's oldest university and a UNESCO World Heritage medina. Discover traditional crafts, historic monuments, and authentic Moroccan culture. Explore the stunning imperial cities of Fes, Marrakech, Rabat, and Meknes.")
-                        .imageUrl("https://images.unsplash.com/photo-1555993534-ee0c0e0a0c0a?w=1200")
-                        .country("Morocco")
-                        .city("Fes")
-                        .featured(true)
-                        .build(),
-                Destination.builder()
-                        .name("Casablanca")
-                        .slug(SlugUtil.generateSlug("Casablanca"))
-                        .shortDescription("Modern metropolis blending French colonial architecture with Moroccan culture")
-                        .fullDescription("Casablanca is Morocco's largest city and economic hub. Visit the magnificent Hassan II Mosque, explore the Art Deco architecture, and enjoy the vibrant coastal atmosphere.")
-                        .imageUrl("https://images.unsplash.com/photo-1555993534-ee0c0e0a0c0a?w=1200")
-                        .country("Morocco")
-                        .city("Casablanca")
-                        .featured(false)
-                        .build(),
-                Destination.builder()
-                        .name("Chefchaouen")
-                        .slug(SlugUtil.generateSlug("Chefchaouen"))
-                        .shortDescription("The Blue Pearl of Morocco nestled in the Rif Mountains")
-                        .fullDescription("Chefchaouen, the Blue City, is famous for its blue-washed buildings and stunning mountain backdrop. Explore the charming medina, shop for local crafts, and enjoy the peaceful atmosphere of this unique destination.")
-                        .imageUrl("https://images.unsplash.com/photo-1539037116277-4db20889f2d4?w=1200")
-                        .country("Morocco")
-                        .city("Chefchaouen")
-                        .featured(true)
-                        .build()
-        ));
+        if (destination != null) {
+            // Destination already exists - DO NOT UPDATE - preserve all user modifications (images, descriptions, etc.)
+            System.out.println("Marrakech destination already exists - preserving all user data");
+            return; // Skip saving to preserve existing data
+        } else {
+            // Create new destination
+            destination = Destination.builder()
+                    .name("Marrakech")
+                    .slug(slug)
+                    .shortDescription("Discover the vibrant Red City with its bustling souks and historic palaces")
+                    .fullDescription("Marrakech, the Red City, is a feast for the senses. Wander through the maze-like medina, visit the stunning Bahia Palace, experience the vibrant Jemaa el-Fnaa square, and indulge in authentic Moroccan cuisine. The home to some of the most extraordinary structures including the beautiful fortified Kasbahs and Medina Palaces.")
+                    .imageUrl("https://images.unsplash.com/photo-1539650116574-75c0c6d73a6e?w=1200")
+                    .country("Morocco")
+                    .city("Marrakech")
+                    .featured(true)
+                    .build();
+        }
         
-        // Filter out destinations that already exist
-        List<Destination> newDestinations = destinations.stream()
-                .filter(dest -> !existingNames.contains(dest.getName()))
-                .collect(java.util.stream.Collectors.toList());
+        destinationRepository.save(destination);
+        System.out.println("Created Marrakech destination");
+        ensureMarrakechDefaultPageCards(destination);
+
+        // Seed Sahara Desert
+        String saharaSlug = SlugUtil.generateSlug("Sahara Desert");
+        Destination saharaDestination = destinationRepository.findBySlug(saharaSlug).orElse(null);
         
-        if (!newDestinations.isEmpty()) {
-            destinationRepository.saveAll(newDestinations);
+        if (saharaDestination != null) {
+            // Destination already exists - DO NOT UPDATE - preserve all user modifications (images, descriptions, etc.)
+            System.out.println("Sahara Desert destination already exists - preserving all user data");
+            return; // Skip saving to preserve existing data
+        } else {
+            // Create new destination
+            saharaDestination = Destination.builder()
+                    .name("Sahara Desert")
+                    .slug(saharaSlug)
+                    .shortDescription("Shared Sahara Desert tours — Merzouga dunes, UNESCO kasbahs, camel rides, and nights under the stars.")
+                    .fullDescription("The people of this country are super friendly and welcoming. We invite you to explore the pristine beauty of Morocco — Sahara, mountains, and beaches — with tailor-made trip packages and Sahara desert tours.\n\n"
+                            + "The Sahara Desert of Morocco offers Merzouga and Erg Chebbi, camel rides, luxury desert camps, and UNESCO kasbahs from the High Atlas to the golden dunes.")
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .country("Morocco")
+                    .city("Merzouga")
+                    .featured(true)
+                    .build();
+            destinationRepository.save(saharaDestination);
+            System.out.println("Created Sahara Desert destination");
+        }
+    }
+    
+    private void seedSaharaDesertIfNeeded() {
+        String saharaSlug = SlugUtil.generateSlug("Sahara Desert");
+        Destination saharaDestination = destinationRepository.findBySlug(saharaSlug).orElse(null);
+        
+        if (saharaDestination == null) {
+            // Create Sahara Desert destination if it doesn't exist - never update existing
+            saharaDestination = Destination.builder()
+                    .name("Sahara Desert")
+                    .slug(saharaSlug)
+                    .shortDescription("Shared Sahara Desert tours — Merzouga dunes, UNESCO kasbahs, camel rides, and nights under the stars.")
+                    .fullDescription("The people of this country are super friendly and welcoming. We invite you to explore the pristine beauty of Morocco — Sahara, mountains, and beaches — with tailor-made trip packages and Sahara desert tours.\n\n"
+                            + "The Sahara Desert of Morocco is one of the most extraordinary destinations in the world: sand dunes of Merzouga and Erg Chebbi, camel rides at sunset, nights in Berber camps, and UNESCO World Heritage kasbahs. Cross the High Atlas, discover palm groves and fortified ksour, and soak up the hospitality of multi-lingual locals on shared and private itineraries inspired by the classic Sahara listings.")
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .country("Morocco")
+                    .city("Merzouga")
+                    .featured(true)
+                    .build();
+            destinationRepository.save(saharaDestination);
+            System.out.println("Created Sahara Desert destination");
+        } else {
+            System.out.println("Sahara Desert destination already exists, preserving existing data");
+        }
+    }
+
+    /**
+     * Ensures the Ouzoud Waterfalls destination exists (Tour in Morocco–style day trip from Marrakech).
+     * Never overwrites an existing row with the same slug.
+     */
+    private void seedOuzoudWaterfallsIfNeeded() {
+        String slug = SlugUtil.generateSlug("Ouzoud Waterfalls");
+        Destination ouzoud = destinationRepository.findBySlug(slug).orElse(null);
+
+        if (ouzoud == null) {
+            ouzoud = Destination.builder()
+                    .name("Ouzoud Waterfalls")
+                    .slug(slug)
+                    .shortDescription(OUZOUD_DESTINATION_SHORT)
+                    .fullDescription(OUZOUD_DESTINATION_FULL)
+                    .imageUrl("https://images.unsplash.com/photo-1584466977763-009977e7c8b6?w=1200")
+                    .country("Morocco")
+                    .city("Ouzoud")
+                    .featured(true)
+                    .build();
+            destinationRepository.save(ouzoud);
+            System.out.println("Created Ouzoud Waterfalls destination");
+        } else {
+            System.out.println("Ouzoud Waterfalls destination already exists, preserving existing data");
+        }
+        ensureOuzoudWaterfallsPageCards(ouzoud);
+    }
+
+    /**
+     * Adds default “Highlights” page cards (same shape as destination detail {@code pageCards}: image, title, body)
+     * when none exist yet — does not replace admin-configured cards.
+     */
+    private void ensureOuzoudWaterfallsPageCards(Destination destination) {
+        List<DestinationPageCard> existing =
+                destinationPageCardRepository.findByDestinationIdOrderBySortOrderAsc(destination.getId());
+        if (!existing.isEmpty()) {
+            return;
+        }
+
+        DestinationPageCard card1 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(0)
+                .imageUrl("https://images.unsplash.com/photo-1584466977763-009977e7c8b6?w=1200")
+                .title("Marrakech Day Trip to Ouzoud Waterfalls")
+                .body(OUZOUD_REFERENCE_LISTING_PARAGRAPH)
+                .build();
+        card1.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card1)
+                .languageCode("fr")
+                .title("Excursion d’une journée Marrakech – cascades d’Ouzoud")
+                .body("À 150 km de Marrakech, les cascades d’Ouzoud forment un paysage à couper le souffle. Ce site compte parmi les plus beaux du Maroc ! Au cœur d’une végétation luxuriante, trois chutes se succèdent, la plus haute atteignant 110 m. Après 1 h 30 de route, vous arrivez à Ouzoud.")
+                .build());
+
+        DestinationPageCard card2 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(1)
+                .imageUrl("https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=1200")
+                .title("Three waterfalls, dramatic drops")
+                .body("The site is famous for its tiered cascades; the highest single drop is about 110 metres. Wooden walkways and viewpoints line the gorge — expect mist, rainbows on sunny days, and unforgettable panoramas.")
+                .build();
+        card2.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card2)
+                .languageCode("fr")
+                .title("Trois cascades, chutes spectaculaires")
+                .body("Le site est célèbre pour ses cascades en gradins ; la chute la plus haute atteint environ 110 m. Des passerelles et des belvédères longent les gorges — brume, arcs-en-ciel par beau temps et vues inoubliables.")
+                .build());
+
+        DestinationPageCard card3 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(2)
+                .imageUrl("https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1200")
+                .title("Green gorges & Barbary macaques")
+                .body("Olive groves and lush cliffs frame the falls. Wild Barbary macaques live in the area — keep snacks sealed and enjoy watching them from a distance. Small cafés and boat rides add to a classic Moroccan nature outing.")
+                .build();
+        card3.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card3)
+                .languageCode("fr")
+                .title("Gorges verdoyantes & magots")
+                .body("Oliviers et falaises verdoyantes encadrent les chutes. Des magots berbères vivent sur place — gardez les encas bien fermés et observez-les de loin. Petits cafés et barques complètent une sortie nature marocaine typique.")
+                .build());
+
+        destination.getPageCards().add(card1);
+        destination.getPageCards().add(card2);
+        destination.getPageCards().add(card3);
+        destinationRepository.save(destination);
+        System.out.println("Seeded Ouzoud Waterfalls destination page cards (highlights)");
+    }
+
+    private void seedOuzoudMarrakechDayTripActivityIfNeeded() {
+        String actSlug = SlugUtil.generateSlug("Marrakech Day Trip to Ouzoud Waterfalls");
+        if (activityRepository.findBySlug(actSlug).isPresent()) {
+            return;
+        }
+        Destination ouzoud = destinationRepository.findBySlug(SlugUtil.generateSlug("Ouzoud Waterfalls")).orElse(null);
+        if (ouzoud == null) {
+            return;
+        }
+
+        Activity activity = Activity.builder()
+                .title("Marrakech Day Trip to Ouzoud Waterfalls")
+                .slug(actSlug)
+                .shortDescription(OUZOUD_ACTIVITY_SHORT)
+                .fullDescription(OUZOUD_ACTIVITY_FULL)
+                .price(new BigDecimal("49.00"))
+                .premiumPrice(new BigDecimal("75.00"))
+                .budgetPrice(new BigDecimal("49.00"))
+                .duration("1 Day")
+                .location("Marrakech – Ouzoud Waterfalls")
+                .category("Marrakech Day Trips")
+                .tourType(Activity.TourType.SHARED)
+                .difficultyLevel(Activity.DifficultyLevel.EASY)
+                .ratingAverage(new BigDecimal("4.8"))
+                .reviewCount(128)
+                .featured(true)
+                .active(true)
+                .maxGroupSize(17)
+                .availableSlots(60)
+                .imageUrl("https://images.unsplash.com/photo-1584466977763-009977e7c8b6?w=1200")
+                .galleryImages(new ArrayList<>(Arrays.asList(
+                        "https://images.unsplash.com/photo-1584466977763-009977e7c8b6?w=1200",
+                        "https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=1200",
+                        "https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1200"
+                )))
+                .availability("Daily")
+                .departureLocation("Marrakech")
+                .returnLocation("Marrakech")
+                .meetingTime("Hotel pick-up in Marrakech (approximately 8:00 AM)")
+                .whatToExpect(OUZOUD_ACTIVITY_SHORT)
+                .includedItems(new ArrayList<>(Arrays.asList(
+                        "Round-trip transport from Marrakech",
+                        "Professional driver / guide",
+                        "Free time to explore the waterfalls and viewpoints"
+                )))
+                .excludedItems(new ArrayList<>(Arrays.asList(
+                        "Lunch and drinks",
+                        "Optional boat ride at the falls",
+                        "Personal expenses",
+                        "Tips and gratuities"
+                )))
+                .complementaries(new ArrayList<>(Arrays.asList(
+                        "Comfortable walking shoes",
+                        "Sunscreen and hat",
+                        "Camera"
+                )))
+                .itinerary(new ArrayList<>(Arrays.asList(
+                        "Morning: Pick-up in Marrakech and scenic drive (~1h30) toward the Middle Atlas.",
+                        "At Ouzoud: Walk to the upper viewpoints, descend toward the pools; optional lunch and boat ride.",
+                        "Afternoon: Last photos and return transfer to Marrakech."
+                )))
+                .destination(ouzoud)
+                .build();
+
+        activityRepository.save(activity);
+        System.out.println("Created Marrakech Day Trip to Ouzoud Waterfalls activity (Tour in Morocco listing).");
+    }
+
+    /**
+     * Ensures the Ourika Valley destination exists (Tour in Morocco–style Atlas / day trips from Marrakech).
+     */
+    private void seedOurikaValleyIfNeeded() {
+        String slug = SlugUtil.generateSlug("Ourika Valley");
+        Destination ourika = destinationRepository.findBySlug(slug).orElse(null);
+
+        if (ourika == null) {
+            ourika = Destination.builder()
+                    .name("Ourika Valley")
+                    .slug(slug)
+                    .shortDescription(OURIKA_DESTINATION_SHORT)
+                    .fullDescription(OURIKA_DESTINATION_FULL)
+                    .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
+                    .country("Morocco")
+                    .city("Ourika Valley")
+                    .featured(true)
+                    .build();
+            destinationRepository.save(ourika);
+            System.out.println("Created Ourika Valley destination");
+        } else {
+            System.out.println("Ourika Valley destination already exists, preserving existing data");
+        }
+        ensureOurikaValleyPageCards(ourika);
+    }
+
+    private void ensureOurikaValleyPageCards(Destination destination) {
+        List<DestinationPageCard> existing =
+                destinationPageCardRepository.findByDestinationIdOrderBySortOrderAsc(destination.getId());
+        if (!existing.isEmpty()) {
+            return;
+        }
+
+        DestinationPageCard card1 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(0)
+                .imageUrl("https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1200")
+                .title("High Atlas Mountains and 3 Valleys Day Trip")
+                .body(OURIKA_3_VALLEYS_LISTING)
+                .build();
+        card1.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card1)
+                .languageCode("fr")
+                .title("Haut Atlas et trois vallées — journée d’aventure")
+                .body("Les montagnes de l’Atlas sont en fait trois chaînes distinctes qui traversent l’intérieur du Maroc en bandes, le divisant en zones plus basses. Au nord le Moyen Atlas, au sud l’Anti-Atlas qui freine le Sahara occidental.")
+                .build());
+
+        DestinationPageCard card2 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(1)
+                .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                .title("Marrakech Day Trip to Ourika Valley")
+                .body(OURIKA_DAY_TRIP_LISTING)
+                .build();
+        card2.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card2)
+                .languageCode("fr")
+                .title("Excursion d’une journée Marrakech – vallée de l’Ourika")
+                .body("Dans le Haut Atlas, nous pouvons organiser des marches de toutes durées et difficultés, des petites balades dans les vallées avec thé à la menthe chez l’habitant, aux randonnées de plusieurs jours sur les sommets.")
+                .build());
+
+        DestinationPageCard card3 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(2)
+                .imageUrl("https://images.unsplash.com/photo-1449452198869-9c768336ebc6?w=1200")
+                .title("Berber villages & the Ourika River")
+                .body("Follow the river past orchards and terraced gardens, stop in adobe villages for tea and crafts, and breathe cool mountain air less than an hour from Marrakech — Morocco’s favourite day-trip escape into the Atlas.")
+                .build();
+        card3.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card3)
+                .languageCode("fr")
+                .title("Villages berbères & rivière de l’Ourika")
+                .body("Suivez la rivière entre vergers et jardins en terrasses, visitez des villages en pisé pour le thé et l’artisanat, et respirez l’air frais de la montagne à moins d’une heure de Marrakech.")
+                .build());
+
+        destination.getPageCards().add(card1);
+        destination.getPageCards().add(card2);
+        destination.getPageCards().add(card3);
+        destinationRepository.save(destination);
+        System.out.println("Seeded Ourika Valley destination page cards (highlights)");
+    }
+
+    private void seedOurikaValleyActivitiesIfNeeded() {
+        Destination ourika = destinationRepository.findBySlug(SlugUtil.generateSlug("Ourika Valley")).orElse(null);
+        if (ourika == null) {
+            return;
+        }
+
+        String slug3 = SlugUtil.generateSlug("High Atlas Mountains and 3 Valleys Day Trip");
+        if (activityRepository.findBySlug(slug3).isEmpty()) {
+            Activity a3 = Activity.builder()
+                    .title("High Atlas Mountains and 3 Valleys Day Trip")
+                    .slug(slug3)
+                    .shortDescription(OURIKA_3_VALLEYS_ACTIVITY_SHORT)
+                    .fullDescription(OURIKA_3_VALLEYS_ACTIVITY_FULL)
+                    .price(new BigDecimal("59.00"))
+                    .premiumPrice(new BigDecimal("89.00"))
+                    .budgetPrice(new BigDecimal("59.00"))
+                    .duration("1 Day")
+                    .location("Marrakech – High Atlas / Ourika valleys")
+                    .category("Adventure Trip")
+                    .tourType(Activity.TourType.SHARED)
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.7"))
+                    .reviewCount(96)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(16)
+                    .availableSlots(48)
+                    .imageUrl("https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1200",
+                            "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200"
+                    )))
+                    .availability("Daily")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("Hotel pick-up in Marrakech (approximately 8:30 AM)")
+                    .whatToExpect(OURIKA_3_VALLEYS_ACTIVITY_SHORT)
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Round-trip transport from Marrakech",
+                            "Driver / guide",
+                            "Photo stops and scenic routing"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and drinks",
+                            "Personal expenses",
+                            "Tips and gratuities"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes",
+                            "Layers for mountain weather",
+                            "Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Morning: pick-up in Marrakech and drive into the High Atlas foothills.",
+                            "Midday: cross contrasting valleys with viewpoints and short walks.",
+                            "Afternoon: return to Marrakech with stops as time allows."
+                    )))
+                    .destination(ourika)
+                    .build();
+            activityRepository.save(a3);
+            System.out.println("Created High Atlas Mountains and 3 Valleys Day Trip activity (Tour in Morocco listing).");
+        }
+
+        String slugD = SlugUtil.generateSlug("Marrakech Day Trip to Ourika Valley");
+        if (activityRepository.findBySlug(slugD).isEmpty()) {
+            Activity ad = Activity.builder()
+                    .title("Marrakech Day Trip to Ourika Valley")
+                    .slug(slugD)
+                    .shortDescription(OURIKA_DAY_TRIP_ACTIVITY_SHORT)
+                    .fullDescription(OURIKA_DAY_TRIP_ACTIVITY_FULL)
+                    .price(new BigDecimal("79.00"))
+                    .premiumPrice(new BigDecimal("120.00"))
+                    .budgetPrice(new BigDecimal("79.00"))
+                    .duration("1 Day")
+                    .location("Marrakech – Ourika Valley")
+                    .category("Private Trip")
+                    .tourType(Activity.TourType.PRIVATE)
+                    .difficultyLevel(Activity.DifficultyLevel.EASY)
+                    .ratingAverage(new BigDecimal("4.9"))
+                    .reviewCount(142)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(6)
+                    .availableSlots(40)
+                    .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200",
+                            "https://images.unsplash.com/photo-1449452198869-9c768336ebc6?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200"
+                    )))
+                    .availability("Daily")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("Flexible pick-up from your Marrakech hotel or riad")
+                    .whatToExpect(OURIKA_DAY_TRIP_ACTIVITY_SHORT)
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Private vehicle and driver",
+                            "Flexible pacing and stops",
+                            "Berber home visit for mint tea (when available)"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and drinks",
+                            "Optional hike guides",
+                            "Tips and gratuities"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Sun hat",
+                            "Walking shoes",
+                            "Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Drive from Marrakech along the Ourika valley road with photo stops.",
+                            "Walk the river, visit villages, optional ascent toward Setti Fatma waterfalls.",
+                            "Lunch on a terrace; return to Marrakech in the late afternoon."
+                    )))
+                    .destination(ourika)
+                    .build();
+            activityRepository.save(ad);
+            System.out.println("Created Marrakech Day Trip to Ourika Valley activity (Tour in Morocco listing).");
+        }
+    }
+
+    private void ensureMarrakechPageCardsIfNeeded() {
+        String slug = SlugUtil.generateSlug("Marrakech");
+        destinationRepository.findBySlug(slug).ifPresent(this::ensureMarrakechDefaultPageCards);
+    }
+
+    /**
+     * Same highlights card layout as {@link #ensureOuzoudWaterfallsPageCards} for the primary seeded destination.
+     */
+    private void ensureMarrakechDefaultPageCards(Destination destination) {
+        List<DestinationPageCard> existing =
+                destinationPageCardRepository.findByDestinationIdOrderBySortOrderAsc(destination.getId());
+        if (!existing.isEmpty()) {
+            return;
+        }
+
+        DestinationPageCard card1 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(0)
+                .imageUrl("https://images.unsplash.com/photo-1597212618440-806262de4f6b?w=1200")
+                .title("Medina & Jemaa el-Fnaa")
+                .body("Lose yourself in the UNESCO-listed medina: narrow lanes, artisan workshops, and the legendary Jemaa el-Fnaa square — storytellers, musicians, and food stalls from dusk till late night.")
+                .build();
+        card1.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card1)
+                .languageCode("fr")
+                .title("Médina & place Jemaa el-Fnaa")
+                .body("Perdez-vous dans la médina classée UNESCO : ruelles, ateliers d’artisans et la légendaire place Jemaa el-Fnaa — conteurs, musiciens et stands de street food du crépuscule à la nuit.")
+                .build());
+
+        DestinationPageCard card2 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(1)
+                .imageUrl("https://images.unsplash.com/photo-1553603227-2358aabe821e?w=1200")
+                .title("Palaces, riads & gardens")
+                .body("From Bahia Palace’s tiled courtyards to the blue brilliance of Majorelle, Marrakech blends Andalusian, Berber, and French influences. Stay in a riad, sip mint tea on a rooftop, and soak up the Red City’s architecture.")
+                .build();
+        card2.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card2)
+                .languageCode("fr")
+                .title("Palais, riads & jardins")
+                .body("Des cours du palais Bahia au bleu éclatant du jardin Majorelle, Marrakech mêle influences andalouses, berbères et françaises. Nuitée en riad, thé à la menthe sur les toits et architecture de la Ville rouge.")
+                .build());
+
+        DestinationPageCard card3 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(2)
+                .imageUrl("https://images.unsplash.com/photo-1489749798305-4fea3ae3d66e?w=1200")
+                .title("Souks, crafts & cuisine")
+                .body("Haggle (politely) for carpets, lanterns, and spices; watch leather and metalwork being made. Tagines, pastilla, and orange-blossom pastries reward every walk — a full sensory introduction to Morocco.")
+                .build();
+        card3.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card3)
+                .languageCode("fr")
+                .title("Souks, artisanat & cuisine")
+                .body("Marchandez (avec le sourire) tapis, lanternes et épices ; observez le travail du cuir et du métal. Tagines, pastilla et pâtisseries à l’eau de fleur d’oranger — une immersion sensorielle au Maroc.")
+                .build());
+
+        destination.getPageCards().add(card1);
+        destination.getPageCards().add(card2);
+        destination.getPageCards().add(card3);
+        destinationRepository.save(destination);
+        System.out.println("Seeded Marrakech destination page cards (highlights)");
+    }
+
+    private void updateSaharaDesertActivitiesDestination() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+        
+        if (saharaDesert == null) {
+            System.out.println("Sahara Desert destination not found, creating it...");
+            seedSaharaDesertIfNeeded();
+            saharaDesert = destinationRepository.findAll().stream()
+                    .filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+            if (saharaDesert == null) {
+                System.out.println("Failed to create Sahara Desert destination");
+                return;
+            }
+        }
+        
+        // Find all activities - check by category, title, or description
+        List<Activity> allActivities = activityRepository.findAll();
+        List<Activity> saharaActivities = allActivities.stream()
+                .filter(a -> {
+                    // Check if it's a Sahara Desert tour by category, title, or description
+                    boolean isSaharaTour = false;
+                    if (a.getCategory() != null && a.getCategory().contains("Sahara Desert")) {
+                        isSaharaTour = true;
+                    } else if (a.getTitle() != null && (
+                            a.getTitle().contains("Sahara") || 
+                            a.getTitle().contains("Desert") ||
+                            a.getTitle().contains("Merzouga"))) {
+                        isSaharaTour = true;
+                    } else if (a.getShortDescription() != null && (
+                            a.getShortDescription().contains("Sahara") ||
+                            a.getShortDescription().contains("desert"))) {
+                        isSaharaTour = true;
+                    }
+                    return isSaharaTour;
+                })
+                .collect(Collectors.toList());
+        
+        System.out.println("Found " + saharaActivities.size() + " Sahara Desert activities to update");
+        
+        if (saharaActivities.isEmpty()) {
+            return;
+        }
+        
+        boolean updated = false;
+        for (Activity activity : saharaActivities) {
+            boolean needsUpdate = false;
+            
+            // Only update critical fields - preserve all user modifications (images, descriptions, prices, etc.)
+            if (relinkSaharaActivities) {
+                if (activity.getDestination() == null) {
+                    activity.setDestination(saharaDesert);
+                    needsUpdate = true;
+                    System.out.println("Updating activity " + activity.getTitle() + " - setting destination to Sahara Desert (preserving user modifications)");
+                } else if (!activity.getDestination().getName().equals("Sahara Desert")) {
+                    activity.setDestination(saharaDesert);
+                    needsUpdate = true;
+                    System.out.println("Updating activity " + activity.getTitle() + " - changing destination from " + 
+                            activity.getDestination().getName() + " to Sahara Desert (preserving user modifications)");
+                }
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsUpdate = true;
+                System.out.println("Activating activity " + activity.getTitle() + " (preserving user modifications)");
+            }
+            
+            if (needsUpdate) {
+                updated = true;
+            }
+        }
+        
+        if (updated) {
+            activityRepository.saveAll(saharaActivities);
+            System.out.println("Updated critical fields for " + saharaActivities.size() + " Sahara Desert activities (user modifications preserved)");
+        } else {
+            System.out.println("No Sahara Desert activities needed updating");
+        }
+    }
+    
+    private void ensureAllActivitiesAreActive() {
+        List<Activity> inactiveActivities = activityRepository.findAll().stream()
+                .filter(a -> a.getActive() == null || !a.getActive())
+                .collect(Collectors.toList());
+        
+        if (!inactiveActivities.isEmpty()) {
+            System.out.println("Found " + inactiveActivities.size() + " inactive activities, activating them (preserving all other data)...");
+            for (Activity activity : inactiveActivities) {
+                // Only update active status - preserve everything else
+                activity.setActive(true);
+            }
+            activityRepository.saveAll(inactiveActivities);
+            System.out.println("Activated " + inactiveActivities.size() + " activities (user modifications preserved)");
         }
     }
     
     private void seedActivities() {
         List<Destination> destinations = destinationRepository.findAll();
-        Destination sahara = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
         Destination marrakech = destinations.stream().filter(d -> d.getName().equals("Marrakech")).findFirst().orElse(null);
-        Destination atlas = destinations.stream().filter(d -> d.getName().equals("Atlas Mountains")).findFirst().orElse(null);
-        Destination fes = destinations.stream().filter(d -> d.getName().equals("Fes")).findFirst().orElse(null);
-        Destination essaouira = destinations.stream().filter(d -> d.getName().equals("Essaouira")).findFirst().orElse(null);
-        Destination ourika = destinations.stream().filter(d -> d.getName().equals("Ourika Valley")).findFirst().orElse(null);
-        Destination agafay = destinations.stream().filter(d -> d.getName().equals("Agafay Desert")).findFirst().orElse(null);
-        Destination berberVillages = destinations.stream().filter(d -> d.getName().equals("Berber Villages")).findFirst().orElse(null);
-        Destination chefchaouen = destinations.stream().filter(d -> d.getName().equals("Chefchaouen")).findFirst().orElse(null);
-        Destination casablanca = destinations.stream().filter(d -> d.getName().equals("Casablanca")).findFirst().orElse(null);
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
         
-        List<Activity> activities = new ArrayList<>(Arrays.asList(
-                // Tours from Fes to Marrakech
-                Activity.builder()
-                        .title("Tour from Fes to Marrakech 3 Days")
-                        .slug(SlugUtil.generateSlug("Tour from Fes to Marrakech 3 Days"))
-                        .shortDescription("Take a 3 days Sahara desert Trip from Marrakesh, the home to some of the most extraordinary structures")
-                        .fullDescription("Take a 3 days Sahara desert Trip from Marrakesh, the home to some of the most extraordinary structures including the beautiful fortified Kasbahs and Medina Palaces. This adventure trip in the desert of Morocco leads you to the heart of the sand dunes, experience a camel trek in Sahara and the amazing life of Berbers.")
-                        .price(new BigDecimal("140.00"))
-                        .duration("3 Days")
-                        .location("Fes to Marrakech")
-                        .category("Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(52)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Fes")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Experience the romance of brilliant starlight desert nights at the heart of the sand dunes, experience a camel trek in Sahara and the amazing life of Berbers with a homestay on our Morocco Trips.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Fes, drive through Middle Atlas Mountains, visit Ifrane and Azrou, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, drive through Todra Gorge and Dades Valley, visit Ouarzazate and Ait Benhaddou Kasbah, overnight in Ouarzazate",
-                                "Day 3: Drive through High Atlas Mountains, visit Tizi n'Tichka pass, arrive in Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(10),
-                                LocalDate.now().plusDays(14)
-                        )))
-                        .destination(fes)
-                        .build(),
-                Activity.builder()
-                        .title("Tour from Fes to Marrakech 4 Days")
-                        .slug(SlugUtil.generateSlug("Tour from Fes to Marrakech 4 Days"))
-                        .shortDescription("Book our 4 days desert Trip from Marrakesh, the home to some of the most extraordinary structures")
-                        .fullDescription("Book our 4 days desert Trip from Marrakesh, the home to some of the most extraordinary structures including the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights at the heart of the sand dunes.")
-                        .price(new BigDecimal("160.00"))
-                        .duration("4 Days")
-                        .location("Fes to Marrakech")
-                        .category("Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(48)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Fes")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Explore the stunning imperial cities of Fes, Marrakech, Rabat, and Meknes. Marvel at the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "All meals",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Fes, drive through Middle Atlas, visit Ifrane, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, drive through Todra Gorge, visit Dades Valley, overnight in Dades",
-                                "Day 3: Visit Ouarzazate, Ait Benhaddou Kasbah, drive through High Atlas, overnight in Marrakech",
-                                "Day 4: Explore Marrakech, visit Bahia Palace, souks, Jemaa el-Fnaa square"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(12),
-                                LocalDate.now().plusDays(16)
-                        )))
-                        .destination(fes)
-                        .build(),
-                // Sahara Desert Tours from Marrakech
-                Activity.builder()
-                        .title("3 Day Sahara Desert Tour from Marrakech")
-                        .slug(SlugUtil.generateSlug("3 Day Sahara Desert Tour from Marrakech"))
-                        .shortDescription("This three-day private desert trip from Marrakech will take you to explore the southern market town renowned Unesco Heritage site")
-                        .fullDescription("This three-day private desert trip from Marrakech will take you to explore the southern market town renowned Unesco Heritage site. Experience the romance of brilliant starlight desert nights at the heart of the sand dunes, experience a camel trek in Sahara and the amazing life of Berbers.")
-                        .price(new BigDecimal("100.00"))
-                        .duration("3 Days")
-                        .location("Marrakech to Sahara")
-                        .category("Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(65)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Explore the southern market town renowned Unesco Heritage site. Experience the romance of brilliant starlight desert nights at the heart of the sand dunes, experience a camel trek in Sahara and the amazing life of Berbers.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas Mountains, visit Ait Benhaddou Kasbah, continue to Dades Valley, overnight in Dades",
-                                "Day 2: Drive through Todra Gorge, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 3: Sunrise over dunes, breakfast, return to Marrakech via Ouarzazate"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(2),
-                                LocalDate.now().plusDays(6),
-                                LocalDate.now().plusDays(9),
-                                LocalDate.now().plusDays(13)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("3 Day Sahara Desert Trip from Marrakech to Fes")
-                        .slug(SlugUtil.generateSlug("3 Day Sahara Desert Trip from Marrakech to Fes"))
-                        .shortDescription("Take a 3 days Sahara desert Trip from Marrakesh, the home to some of the most extraordinary structures")
-                        .fullDescription("Take a 3 days Sahara desert Trip from Marrakesh, the home to some of the most extraordinary structures including the beautiful fortified Kasbahs and Medina Palaces. This Group Sahara Desert Trip from Marrakech to Fes 3 Days will take you through the Sahara Desert, explore the stunning imperial cities.")
-                        .price(new BigDecimal("160.00"))
-                        .duration("3 Days")
-                        .location("Marrakech to Fes")
-                        .category("Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(58)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Fes")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("This Group Sahara Desert Trip from Marrakech to Fes 3 Days will take you through the Sahara Desert, explore the stunning imperial cities of Fes, Marrakech, Rabat, and Meknes.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, drive through Todra Gorge and Dades Valley, visit Ouarzazate, overnight in Ouarzazate",
-                                "Day 3: Drive through Middle Atlas Mountains, visit Ifrane, arrive in Fes"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(11),
-                                LocalDate.now().plusDays(15)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("4 Days Desert Trip from Marrakesh")
-                        .slug(SlugUtil.generateSlug("4 Days Desert Trip from Marrakesh"))
-                        .shortDescription("Book our 4 days desert Trip from Marrakesh, the home to some of the most extraordinary structures")
-                        .fullDescription("Book our 4 days desert Trip from Marrakesh, the home to some of the most extraordinary structures including the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights at the heart of the sand dunes.")
-                        .price(new BigDecimal("159.00"))
-                        .duration("4 Days")
-                        .location("Marrakech to Sahara")
-                        .category("Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(62)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Shared Desert Tour from Marrakesh 4 Days to soak up the loveliness of your surroundings and engage in a pleasant experience. Explore the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "All meals",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Dades Valley, overnight in Dades",
-                                "Day 2: Drive through Todra Gorge, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 3: Sunrise over dunes, breakfast, drive to Ouarzazate, visit Kasbahs, overnight in Ouarzazate",
-                                "Day 4: Return to Marrakech via High Atlas Mountains"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(12),
-                                LocalDate.now().plusDays(16)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("2 Day Desert Tour from Marrakech")
-                        .slug(SlugUtil.generateSlug("2 Day Desert Tour from Marrakech"))
-                        .shortDescription("Discover the Sahara desert of Zagora and the world heritage kasbahs during this 2 days desert tour from Marrakech")
-                        .fullDescription("Discover the Sahara desert of Zagora and the world heritage kasbahs during this 2 days desert tour from Marrakech. This Shared Sahara Desert Tour from Marrakech 2 Days will take you to explore the southern market town and experience the romance of brilliant starlight desert nights.")
-                        .price(new BigDecimal("80.00"))
-                        .duration("2 Days")
-                        .location("Marrakech to Zagora")
-                        .category("Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(72)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Discover the Sahara desert of Zagora and the world heritage kasbahs. Experience a camel trek in Sahara and the amazing life of Berbers with a homestay on our Morocco Trips.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Zagora, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, return to Marrakech via Ouarzazate"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(12)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                // Sahara Desert Activities
-                Activity.builder()
-                        .title("Desert Safari & Camel Trek")
-                        .slug(SlugUtil.generateSlug("Desert Safari & Camel Trek"))
-                        .shortDescription("Experience the magic of the Sahara with a camel trek and overnight desert camp")
-                        .fullDescription("Embark on an unforgettable journey through the golden dunes of the Sahara Desert. Ride camels at sunset, enjoy traditional Berber music around a campfire, sleep under the stars in a luxury desert camp, and witness a breathtaking sunrise over the dunes.")
-                        .price(new BigDecimal("150.00"))
-                        .duration("2 Days / 1 Night")
-                        .location("Merzouga Desert")
-                        .category("Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(45)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(15)
-                        .availableSlots(30)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .galleryImages(new ArrayList<>(Arrays.asList(
-                                "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
-                                "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200"
-                        )))
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Camel trek",
-                                "Overnight desert camp accommodation",
-                                "Traditional dinner and breakfast",
-                                "Berber music performance",
-                                "Transportation from hotel"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Personal expenses",
-                                "Tips"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Pickup from hotel, drive to Merzouga, camel trek at sunset, dinner at camp",
-                                "Day 2: Sunrise over dunes, breakfast, return to hotel"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(10),
-                                LocalDate.now().plusDays(15),
-                                LocalDate.now().plusDays(20)
-                        )))
-                        .destination(sahara)
-                        .build(),
-                Activity.builder()
-                        .title("Quad Biking Adventure")
-                        .slug(SlugUtil.generateSlug("Quad Biking Adventure"))
-                        .shortDescription("Thrilling quad bike ride through the desert dunes")
-                        .fullDescription("Get your adrenaline pumping with an exciting quad biking adventure through the Sahara Desert. Navigate through sand dunes, enjoy stunning desert views, and experience the thrill of off-road desert driving.")
-                        .price(new BigDecimal("80.00"))
-                        .duration("2 Hours")
-                        .location("Merzouga Desert")
-                        .category("Adventure")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(32)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(10)
-                        .availableSlots(20)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Quad bike rental",
-                                "Safety equipment",
-                                "Professional guide",
-                                "Water"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Transportation",
-                                "Personal insurance"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(12)
-                        )))
-                        .destination(sahara)
-                        .build(),
-                // Marrakech Day Trips
-                Activity.builder()
-                        .title("Marrakech City Tour with Driver")
-                        .slug(SlugUtil.generateSlug("Marrakech City Tour with Driver"))
-                        .shortDescription("Meet your driver/guide at your accommodation around 9 AM and go to explore the impressive")
-                        .fullDescription("Meet your driver/guide at your accommodation around 9 AM and go to explore the impressive Marrakech. Visit the stunning Bahia Palace, explore the vibrant souks, experience the bustling Jemaa el-Fnaa square, and learn about the city's rich history and culture.")
-                        .price(new BigDecimal("60.00"))
-                        .duration("3 Hours")
-                        .location("Marrakech")
-                        .category("Marrakech Day Trips")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(58)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(20)
-                        .availableSlots(40)
-                        .imageUrl("https://images.unsplash.com/photo-1539650116574-75c0c6d73a6e?w=1200")
-                        .availability("Every Day")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("9 AM at your accommodation")
-                        .whatToExpect("Explore the impressive Marrakech with a professional driver/guide. Visit the stunning Bahia Palace, explore the vibrant souks, experience the bustling Jemaa el-Fnaa square.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Professional driver/guide",
-                                "Transportation",
-                                "Hotel pickup and drop-off"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Visit Bahia Palace",
-                                "Explore the souks",
-                                "Experience Jemaa el-Fnaa square",
-                                "Visit Koutoubia Mosque"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("Camel Ride Experience in Marrakech")
-                        .slug(SlugUtil.generateSlug("Camel Ride Experience in Marrakech"))
-                        .shortDescription("Experience a camel ride in the Marrakech Palm Grove")
-                        .fullDescription("Experience a camel ride in the Marrakech Palm Grove. Enjoy a peaceful ride through the palm trees, learn about the local culture, and capture beautiful photos of this unique experience.")
-                        .price(new BigDecimal("40.00"))
-                        .duration("2 Hours")
-                        .location("Marrakech Palm Grove")
-                        .category("Marrakech Day Trips")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.5"))
-                        .reviewCount(42)
-                        .featured(false)
-                        .active(true)
-                        .maxGroupSize(15)
-                        .availableSlots(30)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Every Day")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("Flexible - contact for scheduling")
-                        .whatToExpect("Experience a camel ride in the Marrakech Palm Grove. Enjoy a peaceful ride through the palm trees and learn about the local culture.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Camel ride",
-                                "Professional guide",
-                                "Transportation from hotel"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Pickup from hotel",
-                                "Camel ride through palm grove",
-                                "Traditional mint tea",
-                                "Return to hotel"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(7)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("High Atlas Mountains and 3 Valleys Day Trip")
-                        .slug(SlugUtil.generateSlug("High Atlas Mountains and 3 Valleys Day Trip"))
-                        .shortDescription("Explore the High Atlas Mountains and 3 Valleys on a day trip from Marrakech")
-                        .fullDescription("Explore the High Atlas Mountains and 3 Valleys on a day trip from Marrakech. Visit traditional Berber villages, enjoy stunning mountain views, experience authentic mountain culture, and enjoy a traditional lunch with a Berber family.")
-                        .price(new BigDecimal("55.00"))
-                        .duration("1 Day")
-                        .location("Atlas Mountains")
-                        .category("Marrakech Day Trips")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(68)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
-                        .availability("Every Day")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("8 AM at your accommodation")
-                        .whatToExpect("Explore the High Atlas Mountains and 3 Valleys. Visit traditional Berber villages, enjoy stunning mountain views, and experience authentic mountain culture.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Traditional lunch with Berber family",
-                                "Hotel pickup and drop-off"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Departure from Marrakech",
-                                "Drive through High Atlas Mountains",
-                                "Visit 3 Valleys (Ourika, Asni, Imlil)",
-                                "Visit traditional Berber villages",
-                                "Traditional lunch with Berber family",
-                                "Return to Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(2),
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(11)
-                        )))
-                        .destination(atlas)
-                        .build(),
-                Activity.builder()
-                        .title("Private Day Trip to Agafay Desert from Marrakech")
-                        .slug(SlugUtil.generateSlug("Private Day Trip to Agafay Desert from Marrakech"))
-                        .shortDescription("Enjoy a private day trip to the Agafay Desert from Marrakech")
-                        .fullDescription("Enjoy a private day trip to the Agafay Desert from Marrakech. Experience a different desert landscape, enjoy camel rides, quad biking, and stunning views of the Atlas Mountains. Perfect for those who want a desert experience close to Marrakech.")
-                        .price(new BigDecimal("70.00"))
-                        .duration("1 Day")
-                        .location("Agafay Desert")
-                        .category("Marrakech Day Trips")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(54)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(12)
-                        .availableSlots(24)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Every Day")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("8 AM at your accommodation")
-                        .whatToExpect("Experience a different desert landscape in the Agafay Desert. Enjoy camel rides, quad biking, and stunning views of the Atlas Mountains.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Camel ride",
-                                "Traditional lunch",
-                                "Hotel pickup and drop-off"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Departure from Marrakech",
-                                "Drive to Agafay Desert",
-                                "Camel ride experience",
-                                "Quad biking (optional)",
-                                "Traditional lunch",
-                                "Return to Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(10)
-                        )))
-                        .destination(agafay)
-                        .build(),
-                Activity.builder()
-                        .title("Marrakech Day Trip to Ourika Valley")
-                        .slug(SlugUtil.generateSlug("Marrakech Day Trip to Ourika Valley"))
-                        .shortDescription("Explore the beautiful Ourika Valley on a day trip from Marrakech")
-                        .fullDescription("Explore the beautiful Ourika Valley on a day trip from Marrakech. Visit traditional Berber villages, enjoy the lush landscapes, experience authentic mountain culture, and enjoy a traditional lunch with a Berber family.")
-                        .price(new BigDecimal("50.00"))
-                        .duration("1 Day")
-                        .location("Ourika Valley")
-                        .category("Marrakech Day Trips")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(76)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
-                        .availability("Every Day")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("8 AM at your accommodation")
-                        .whatToExpect("Explore the beautiful Ourika Valley. Visit traditional Berber villages, enjoy the lush landscapes, and experience authentic mountain culture.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Traditional lunch with Berber family",
-                                "Hotel pickup and drop-off"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Departure from Marrakech",
-                                "Drive to Ourika Valley",
-                                "Visit traditional Berber villages",
-                                "Walk along the Ourika River",
-                                "Traditional lunch with Berber family",
-                                "Visit local market",
-                                "Return to Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(2),
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(11)
-                        )))
-                        .destination(ourika)
-                        .build(),
-                Activity.builder()
-                        .title("Marrakech Day Trip to Essaouira")
-                        .slug(SlugUtil.generateSlug("Marrakech Day Trip to Essaouira"))
-                        .shortDescription("Discover the charming coastal city of Essaouira on a day trip from Marrakech")
-                        .fullDescription("Discover the charming coastal city of Essaouira on a day trip from Marrakech. Explore the fortified medina, visit the historic port, enjoy fresh seafood, and experience the laid-back atmosphere of this UNESCO World Heritage site.")
-                        .price(new BigDecimal("65.00"))
-                        .duration("1 Day")
-                        .location("Essaouira")
-                        .category("Marrakech Day Trips")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(89)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Every Day")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("8 AM at your accommodation")
-                        .whatToExpect("Discover the charming coastal city of Essaouira. Explore the fortified medina, visit the historic port, and enjoy fresh seafood.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in air-conditioned vehicle",
-                                "Professional driver/guide",
-                                "Hotel pickup and drop-off"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Departure from Marrakech",
-                                "Drive to Essaouira (2.5 hours)",
-                                "Explore the fortified medina",
-                                "Visit the historic port",
-                                "Enjoy fresh seafood lunch",
-                                "Free time to explore",
-                                "Return to Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(6),
-                                LocalDate.now().plusDays(9),
-                                LocalDate.now().plusDays(12)
-                        )))
-                        .destination(essaouira)
-                        .build(),
-                // Marrakech Activities
-                Activity.builder()
-                        .title("Marrakech City Tour")
-                        .slug(SlugUtil.generateSlug("Marrakech City Tour"))
-                        .shortDescription("Explore the Red City's most iconic landmarks and hidden gems")
-                        .fullDescription("Discover the magic of Marrakech with a comprehensive city tour. Visit the stunning Bahia Palace, explore the vibrant souks, experience the bustling Jemaa el-Fnaa square, and learn about the city's rich history and culture.")
-                        .price(new BigDecimal("60.00"))
-                        .duration("4 Hours")
-                        .location("Marrakech Medina")
-                        .category("City Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(58)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(20)
-                        .availableSlots(40)
-                        .imageUrl("https://images.unsplash.com/photo-1539650116574-75c0c6d73a6e?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Professional guide",
-                                "Entrance fees",
-                                "Hotel pickup and drop-off"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Lunch",
-                                "Personal expenses"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Visit Bahia Palace",
-                                "Explore the souks",
-                                "Experience Jemaa el-Fnaa square",
-                                "Visit Koutoubia Mosque"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("Cooking Class & Market Tour")
-                        .slug(SlugUtil.generateSlug("Cooking Class & Market Tour"))
-                        .shortDescription("Learn to cook authentic Moroccan dishes with a local chef")
-                        .fullDescription("Immerse yourself in Moroccan cuisine with a hands-on cooking class. Start with a guided tour of the local market to select fresh ingredients, then learn to prepare traditional dishes like tagine and couscous under the guidance of a professional chef.")
-                        .price(new BigDecimal("75.00"))
-                        .duration("5 Hours")
-                        .location("Marrakech")
-                        .category("Cultural Experience")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.9"))
-                        .reviewCount(28)
-                        .featured(false)
-                        .active(true)
-                        .maxGroupSize(12)
-                        .availableSlots(24)
-                        .imageUrl("https://images.unsplash.com/photo-1556910103-1c02745aae4d?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Market tour",
-                                "Cooking class",
-                                "All ingredients",
-                                "Lunch",
-                                "Recipe booklet"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Transportation"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(2),
-                                LocalDate.now().plusDays(6),
-                                LocalDate.now().plusDays(11)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                // Atlas Mountains Activities
-                Activity.builder()
-                        .title("Mount Toubkal Trek")
-                        .slug(SlugUtil.generateSlug("Mount Toubkal Trek"))
-                        .shortDescription("Conquer North Africa's highest peak")
-                        .fullDescription("Challenge yourself with a trek to the summit of Mount Toubkal, North Africa's highest peak at 4,167 meters. This multi-day adventure takes you through stunning mountain landscapes, traditional Berber villages, and offers breathtaking panoramic views.")
-                        .price(new BigDecimal("350.00"))
-                        .duration("3 Days / 2 Nights")
-                        .location("Atlas Mountains")
-                        .category("Hiking & Trekking")
-                        .difficultyLevel(Activity.DifficultyLevel.HARD)
-                        .ratingAverage(new BigDecimal("4.5"))
-                        .reviewCount(22)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(8)
-                        .availableSlots(16)
-                        .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Professional mountain guide",
-                                "Mountain hut accommodation",
-                                "All meals",
-                                "Equipment rental",
-                                "Transportation"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Personal gear",
-                                "Travel insurance"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Trek to base camp, overnight in mountain hut",
-                                "Day 2: Summit attempt, return to base camp",
-                                "Day 3: Return to Imlil village"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(14),
-                                LocalDate.now().plusDays(21)
-                        )))
-                        .destination(atlas)
-                        .build(),
-                Activity.builder()
-                        .title("Berber Village Day Trip")
-                        .slug(SlugUtil.generateSlug("Berber Village Day Trip"))
-                        .shortDescription("Experience authentic Berber culture in traditional mountain villages")
-                        .fullDescription("Visit traditional Berber villages nestled in the Atlas Mountains. Meet local families, learn about their way of life, enjoy a traditional lunch, and experience the warm hospitality of the Berber people.")
-                        .price(new BigDecimal("55.00"))
-                        .duration("6 Hours")
-                        .location("Atlas Mountains")
-                        .category("Cultural Experience")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(35)
-                        .featured(false)
-                        .active(true)
-                        .maxGroupSize(15)
-                        .availableSlots(30)
-                        .imageUrl("https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Transportation",
-                                "Local guide",
-                                "Traditional lunch",
-                                "Tea ceremony"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Personal expenses"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(9),
-                                LocalDate.now().plusDays(16)
-                        )))
-                        .destination(atlas)
-                        .build(),
-                // Chefchaouen Activities
-                Activity.builder()
-                        .title("Chefchaouen Walking Tour")
-                        .slug(SlugUtil.generateSlug("Chefchaouen Walking Tour"))
-                        .shortDescription("Discover the Blue City's charming streets and hidden corners")
-                        .fullDescription("Explore the picturesque blue-washed streets of Chefchaouen on a guided walking tour. Visit the historic kasbah, shop for local crafts, learn about the city's history, and capture stunning photos of this unique destination.")
-                        .price(new BigDecimal("40.00"))
-                        .duration("3 Hours")
-                        .location("Chefchaouen Medina")
-                        .category("City Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(42)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(18)
-                        .availableSlots(36)
-                        .imageUrl("https://images.unsplash.com/photo-1539037116277-4db20889f2d4?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Professional guide",
-                                "Entrance fees"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Personal expenses"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(2),
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(10)
-                        )))
-                        .destination(chefchaouen)
-                        .build(),
-                // Fes Activities
-                Activity.builder()
-                        .title("Fes Medina Guided Tour")
-                        .slug(SlugUtil.generateSlug("Fes Medina Guided Tour"))
-                        .shortDescription("Explore the world's largest car-free urban area")
-                        .fullDescription("Discover the ancient medina of Fes, a UNESCO World Heritage site. Visit the Al-Qarawiyyin University, explore traditional tanneries, see skilled craftsmen at work, and immerse yourself in the rich cultural heritage of this imperial city.")
-                        .price(new BigDecimal("65.00"))
-                        .duration("5 Hours")
-                        .location("Fes Medina")
-                        .category("City Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(38)
-                        .featured(false)
-                        .active(true)
-                        .maxGroupSize(15)
-                        .availableSlots(30)
-                        .imageUrl("https://images.unsplash.com/photo-1555993534-ee0c0e0a0c0a?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Professional guide",
-                                "Entrance fees",
-                                "Hotel pickup"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Lunch",
-                                "Personal expenses"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(13)
-                        )))
-                        .destination(fes)
-                        .build(),
-                // Shared/Group Tours
-                Activity.builder()
-                        .title("Shared Tour from Marrakech to Sahara 2 Days")
-                        .slug(SlugUtil.generateSlug("Shared Tour from Marrakech to Sahara 2 Days"))
-                        .shortDescription("Discover the Sahara desert of Morocco and the world heritage kasbahs during this Shared Sahara Desert Tour from Marrakech 2 Days")
-                        .fullDescription("Discover the Sahara desert of Morocco and the world heritage kasbahs during this Shared Sahara Desert Tour from Marrakech 2 Days. This adventure trip in the desert of Morocco leads you to the heart of the sand dunes, experience a camel trek in Sahara.")
-                        .price(new BigDecimal("59.00"))
-                        .duration("2 Days")
-                        .location("Marrakech to Sahara")
-                        .category("Shared Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(85)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Discover the Sahara desert of Morocco and the world heritage kasbahs. Experience a camel trek in Sahara and the amazing life of Berbers.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in shared vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Zagora, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, return to Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(5),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(12)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("Shared Sahara Desert Tour from Marrakech 3 Days")
-                        .slug(SlugUtil.generateSlug("Shared Sahara Desert Tour from Marrakech 3 Days"))
-                        .shortDescription("This Shared Sahara Desert Tour from Marrakech 3 Days, will take you to explore the southern site's town renowned Unesco")
-                        .fullDescription("This Shared Sahara Desert Tour from Marrakech 3 Days, will take you to explore the southern site's town renowned Unesco Heritage site. Experience the romance of brilliant starlight desert nights at the heart of the sand dunes, experience a camel trek in Sahara.")
-                        .price(new BigDecimal("80.00"))
-                        .duration("3 Days")
-                        .location("Marrakech to Sahara")
-                        .category("Shared Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(92)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Explore the southern site's town renowned Unesco Heritage site. Experience the romance of brilliant starlight desert nights at the heart of the sand dunes.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in shared vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Dades Valley, overnight in Dades",
-                                "Day 2: Drive through Todra Gorge, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 3: Sunrise over dunes, breakfast, return to Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(2),
-                                LocalDate.now().plusDays(6),
-                                LocalDate.now().plusDays(9),
-                                LocalDate.now().plusDays(13)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("Group Sahara Desert Trip from Marrakech to Fes 3 Days")
-                        .slug(SlugUtil.generateSlug("Group Sahara Desert Trip from Marrakech to Fes 3 Days"))
-                        .shortDescription("This Group Sahara Desert Trip from Marrakech to Fes 3 Days will take you through the Sahara Desert, explore the")
-                        .fullDescription("This Group Sahara Desert Trip from Marrakech to Fes 3 Days will take you through the Sahara Desert, explore the stunning imperial cities of Fes, Marrakech, Rabat, and Meknes. Experience the romance of brilliant starlight desert nights at the heart of the sand dunes.")
-                        .price(new BigDecimal("120.00"))
-                        .duration("3 Days")
-                        .location("Marrakech to Fes")
-                        .category("Shared Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(78)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Fes")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("This Group Sahara Desert Trip will take you through the Sahara Desert, explore the stunning imperial cities of Fes, Marrakech, Rabat, and Meknes.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in shared vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, drive through Todra Gorge and Dades Valley, visit Ouarzazate, overnight in Ouarzazate",
-                                "Day 3: Drive through Middle Atlas Mountains, visit Ifrane, arrive in Fes"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(11),
-                                LocalDate.now().plusDays(15)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("Shared Desert Tour from Marrakesh 4 Days")
-                        .slug(SlugUtil.generateSlug("Shared Desert Tour from Marrakesh 4 Days"))
-                        .shortDescription("Shared Desert Tour from Marrakesh 4 Days to soak up the loveliness of your surroundings and engage in a pleasant")
-                        .fullDescription("Shared Desert Tour from Marrakesh 4 Days to soak up the loveliness of your surroundings and engage in a pleasant experience. Explore the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights.")
-                        .price(new BigDecimal("99.00"))
-                        .duration("4 Days")
-                        .location("Marrakech to Sahara")
-                        .category("Shared Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.8"))
-                        .reviewCount(67)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Marrakech")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Soak up the loveliness of your surroundings and engage in a pleasant experience. Explore the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in shared vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "All meals",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Marrakech, drive through High Atlas, visit Ait Benhaddou, continue to Dades Valley, overnight in Dades",
-                                "Day 2: Drive through Todra Gorge, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 3: Sunrise over dunes, breakfast, drive to Ouarzazate, visit Kasbahs, overnight in Ouarzazate",
-                                "Day 4: Return to Marrakech via High Atlas Mountains"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(12),
-                                LocalDate.now().plusDays(16)
-                        )))
-                        .destination(marrakech)
-                        .build(),
-                Activity.builder()
-                        .title("Shared Tour from Fes to Marrakech 4 Days")
-                        .slug(SlugUtil.generateSlug("Shared Tour from Fes to Marrakech 4 Days"))
-                        .shortDescription("Book our Shared Tour from Fes to Marrakech 4 Days, and travel through the stunning imperial cities of Morocco Fes")
-                        .fullDescription("Book our Shared Tour from Fes to Marrakech 4 Days, and travel through the stunning imperial cities of Morocco Fes. Explore the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights at the heart of the sand dunes.")
-                        .price(new BigDecimal("129.00"))
-                        .duration("4 Days")
-                        .location("Fes to Marrakech")
-                        .category("Shared Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(71)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Fes")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("Travel through the stunning imperial cities of Morocco Fes. Explore the beautiful fortified Kasbahs and Medina Palaces, gorges, and the romance of brilliant starlight desert nights.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in shared vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "All meals",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Fes, drive through Middle Atlas, visit Ifrane, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, drive through Todra Gorge, visit Dades Valley, overnight in Dades",
-                                "Day 3: Visit Ouarzazate, Ait Benhaddou Kasbah, drive through High Atlas, overnight in Marrakech",
-                                "Day 4: Explore Marrakech, visit Bahia Palace, souks, Jemaa el-Fnaa square"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(4),
-                                LocalDate.now().plusDays(8),
-                                LocalDate.now().plusDays(12),
-                                LocalDate.now().plusDays(16)
-                        )))
-                        .destination(fes)
-                        .build(),
-                Activity.builder()
-                        .title("Shared Tour from Fes to Marrakech 3 Days")
-                        .slug(SlugUtil.generateSlug("Shared Tour from Fes to Marrakech 3 Days"))
-                        .shortDescription("This adventure trip in the desert of Morocco and Shared Tour from Fes to Marrakech leads you to the heart")
-                        .fullDescription("This adventure trip in the desert of Morocco and Shared Tour from Fes to Marrakech leads you to the heart of the sand dunes, experience a camel trek in Sahara and the amazing life of Berbers with a homestay on our Morocco Trips.")
-                        .price(new BigDecimal("99.00"))
-                        .duration("3 Days")
-                        .location("Fes to Marrakech")
-                        .category("Shared Sahara Desert Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.MODERATE)
-                        .ratingAverage(new BigDecimal("4.7"))
-                        .reviewCount(83)
-                        .featured(true)
-                        .active(true)
-                        .maxGroupSize(16)
-                        .availableSlots(32)
-                        .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
-                        .availability("Everyday")
-                        .departureLocation("Fes")
-                        .returnLocation("Marrakech")
-                        .meetingTime("15 Minutes Before Departure time 8 am")
-                        .whatToExpect("This adventure trip in the desert of Morocco leads you to the heart of the sand dunes, experience a camel trek in Sahara and the amazing life of Berbers.")
-                        .complementaries(new ArrayList<>(Arrays.asList(
-                                "Transportation in shared vehicle",
-                                "Professional driver/guide",
-                                "Camel trek in Sahara",
-                                "Overnight in desert camp",
-                                "Traditional dinner and breakfast",
-                                "Hotel accommodation"
-                        )))
-                        .itinerary(new ArrayList<>(Arrays.asList(
-                                "Day 1: Departure from Fes, drive through Middle Atlas Mountains, visit Ifrane and Azrou, continue to Merzouga, camel trek at sunset, overnight in desert camp",
-                                "Day 2: Sunrise over dunes, breakfast, drive through Todra Gorge and Dades Valley, visit Ouarzazate and Ait Benhaddou Kasbah, overnight in Ouarzazate",
-                                "Day 3: Drive through High Atlas Mountains, visit Tizi n'Tichka pass, arrive in Marrakech"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(3),
-                                LocalDate.now().plusDays(7),
-                                LocalDate.now().plusDays(10),
-                                LocalDate.now().plusDays(14)
-                        )))
-                        .destination(fes)
-                        .build(),
-                // Casablanca Activities
-                Activity.builder()
-                        .title("Hassan II Mosque & City Tour")
-                        .slug(SlugUtil.generateSlug("Hassan II Mosque & City Tour"))
-                        .shortDescription("Visit the magnificent Hassan II Mosque and explore Casablanca")
-                        .fullDescription("Discover Casablanca's highlights including the stunning Hassan II Mosque, one of the largest mosques in the world. Explore the Art Deco architecture, visit the Corniche, and learn about the city's history and culture.")
-                        .price(new BigDecimal("50.00"))
-                        .duration("4 Hours")
-                        .location("Casablanca")
-                        .category("City Tours")
-                        .difficultyLevel(Activity.DifficultyLevel.EASY)
-                        .ratingAverage(new BigDecimal("4.6"))
-                        .reviewCount(29)
-                        .featured(false)
-                        .active(true)
-                        .maxGroupSize(20)
-                        .availableSlots(40)
-                        .imageUrl("https://images.unsplash.com/photo-1555993534-ee0c0e0a0c0a?w=1200")
-                        .includedItems(new ArrayList<>(Arrays.asList(
-                                "Professional guide",
-                                "Mosque entrance fee",
-                                "Transportation"
-                        )))
-                        .excludedItems(new ArrayList<>(Arrays.asList(
-                                "Personal expenses"
-                        )))
-                        .availableDates(new ArrayList<>(Arrays.asList(
-                                LocalDate.now().plusDays(1),
-                                LocalDate.now().plusDays(6),
-                                LocalDate.now().plusDays(12)
-                        )))
-                        .destination(casablanca)
-                        .build()
-        ));
-        
-        // Filter out activities that already exist (by title)
-        List<Activity> existingActivities = activityRepository.findAll();
-        List<String> existingActivityTitles = existingActivities.stream()
-                .map(Activity::getTitle)
-                .collect(java.util.stream.Collectors.toList());
-        
-        List<Activity> newActivities = activities.stream()
-                .filter(activity -> !existingActivityTitles.contains(activity.getTitle()))
-                .collect(java.util.stream.Collectors.toList());
-        
-        if (!newActivities.isEmpty()) {
-            activityRepository.saveAll(newActivities);
+        if (marrakech == null) {
+            System.out.println("ERROR: Marrakech destination not found! Cannot seed activities.");
+            return;
         }
+        
+        if (saharaDesert == null) {
+            System.out.println("ERROR: Sahara Desert destination not found! Creating it now...");
+            seedSaharaDesertIfNeeded();
+            destinations = destinationRepository.findAll();
+            saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+            if (saharaDesert == null) {
+                System.out.println("ERROR: Failed to create Sahara Desert destination! Cannot seed activities.");
+                return;
+            }
+        }
+        
+        System.out.println("Seeding activities with Marrakech and Sahara Desert destinations...");
+        
+        // Check if activity already exists
+        String slug = SlugUtil.generateSlug("Tour from Fes to Marrakech 3 Days");
+        Optional<Activity> existingActivity = activityRepository.findBySlug(slug);
+        Activity activity;
+        
+        if (existingActivity.isPresent()) {
+            // Activity already exists - only update critical fields (destination, active status)
+            // Preserve all user modifications (images, descriptions, prices, etc.)
+            activity = existingActivity.get();
+            boolean needsSave = false;
+            
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !activity.getDestination().getName().equals("Sahara Desert"))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            
+            if (needsSave) {
+                activityRepository.save(activity);
+                System.out.println("✓ Updated critical fields for existing activity: " + activity.getTitle() + " (preserved user modifications)");
+            } else {
+                System.out.println("✓ Activity already exists: " + activity.getTitle() + " (no changes needed)");
+            }
+        } else {
+            // Create new activity
+            activity = Activity.builder()
+                    .title("Tour from Fes to Marrakech 3 Days")
+                    .slug(slug)
+                    .shortDescription("Take a 3 days Sahara desert Trip from Marrakesh, the home to some of the most extraordinary structures")
+                    .fullDescription("During this Tour from Fes to Marrakech 3 Days, you will explore the imperial cities, high atlas mountains, southern market town renowned Unesco Heritage site, or fortified kasbahs. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for the memorable Sahara Desert Tours to the Merzouga and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals. Do you want a real change of scenery far from all the constraints of the modern world? This adventure trip in the desert of Morocco leads you to the heart of the Sahara Desert in landscapes of beauty. You will fully enjoy the pleasure of roaming freely on some of the most beautiful slopes and enjoy the beautiful sunset in the Sahara. A short but full impression of this area of Morocco with its Mountains, gorges, valleys, Kasbahs, and Sahara desert. Not to mention the splendor of the night sky, the sunset, the sunrise, and the hospitality of the people.")
+                    .price(new BigDecimal("140.00"))
+                    .duration("3 Days")
+                    .location("Fes to Marrakech")
+                    .category("Sahara Desert Tours")
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.7"))
+                    .reviewCount(52)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(16)
+                    .availableSlots(32)
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200"
+                    )))
+                    .availability("Everyday")
+                    .departureLocation("Fes")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 Minutes Before Departure time 8 am")
+                    .whatToExpect("A Tour from Fes to Marrakech is an unforgettable experience that will allow you to go through the history and the hidden culture and traditions of the daily life of Morocco as well as the discovery of the old imperial cities in Morocco. Do you want a real change of scenery far from all the constraints of the modern world? This adventure trip in the desert of Morocco leads you to the heart of the Sahara Desert in landscapes of beauty. You will fully enjoy the pleasure of roaming freely on some of the most beautiful slopes and enjoy the beautiful sunset in the Sahara. A short but full impression of this area of Morocco with its Mountains, gorges, green palm groves, Kasbahs, and Sahara desert. Not to mention the splendor of the night sky, the sunset, the camel ride experience, and the hospitality of the people.")
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Professional Driver/ Guide",
+                            "Overnight in Desert camp and Camel Ride",
+                            "Transport by an air-conditioned vehicle",
+                            "Hotel Pick-up and Drop-off",
+                            "Transportation insurance"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and Drinks",
+                            "Tips and Gratuities",
+                            "Any Private Expenses",
+                            "Travel insurance"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes for walking tour",
+                            "Sunscreen",
+                            "Your Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Day 1: Fes - Azrou - Ziz Valley - Sahara Desert. Your driver/guide will pick you up at your Fes accommodation around 8 am for a beautiful journey to the beautiful dunes of Merzouga, passing by Ifran known as \"the Switzerland Moroccan\", one hour drive, we will stop to visit the cedar forest in Azrou and see the monkeys climbing cedar trees. Then follow the path and cross the mountains of the Middle Atlas, passing by Midelt, stop at Ziz valley for pictures of stunning panoramic views over the gorges of the Ziz River, next to the city Erfoud of famous by fossil where are extracted the rocks containing fossils, Arrival at Merzouga dunes \"Erg Chebbi\" where we can feel the peace and tranquility of the desert. You will be welcomed by a mint tea enjoying the silence of the Sahara. And then, get ready for a new adventure experience, to a Berber camp in a lifetime experience, you will ride a camel through the golden dunes of Erg Chebbi, to assist to a wonderful sunset and spend a romantic night in the desert camp. After dinner, we gather around the fire and enjoy the desert night, perhaps with traditional Berber drums.",
+                            "Day 2: Sahara Desert - Todra Gorges - Dades Valley - Ouarzazate. Early wake up for a lifetime sunrise over the dunes, you will enjoy the change of sand color with the light of the sun. Prepare your cameras and your phones to take some memorable pictures. After taking photos, you will take shower and breakfast, and then, you will ride camels back to the hotel enjoying the silence and the charm of the dunes with the sunlight. Our Tour from Fes to Marrakech continues for a new journey through the palm groves and oasis direction to Tinghir and its amazing Todra Gorges and the big canyons 300 m high. After the visit, we will continue to Dades gorges above the valley. Many stops for photos along the valley, Then continue to Kalaat Magouna (Rose Valley) famous for its annual festival of roses that takes place every year in May. After visiting a female cooperative of roses, we will drive to Ouarzazate through the oasis of Skoura, where we will stop to visit the old Kasbah Amrideil (500 years old) then arrive in Ouarzazate. Dinner and overnight at the hotel.",
+                            "Day 3: Ouarzazate - Kasbah Ait Benhaddou - High Atlas - Marrakech. Breakfast at your Hotel or Riad in Ouarzazate, then, we will start a new journey of our Tour from Fes to Marrakech, our first stop for today is to visit the city's famous kasbah, including that of Taourirt marked as world heritage by Unesco and one of the beautiful palaces in the area. Not far from the city Ouarzazate Kasbah we will stop to visit the museum of movies and cinema studios, where many international movies are shot, like: (Gladiator, Lawrence d'Arabie, Games of the throne, the Babel…). 20 km later we will turn right to visit the famous kasbah of Ait Ben Haddou, after the visit we will continue crossing the high Atlas Mountains and its dramatic landscapes and the hidden Berber villages settled in the foothills of the massive valleys. (optional: we can have lunch in a local restaurant in the Tichka pass) else, we will continue to Marrakech if you want to use your left time visiting the amazing Majorelle gardens."
+                    )))
+                    .availableDates(new ArrayList<>(Arrays.asList(
+                            LocalDate.now().plusDays(3),
+                            LocalDate.now().plusDays(7),
+                            LocalDate.now().plusDays(10),
+                            LocalDate.now().plusDays(14)
+                    )))
+                    .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
+                    .destination(saharaDesert)
+                    .tourType(Activity.TourType.PRIVATE)
+                    .build();
+        }
+        
+        activityRepository.save(activity);
+        System.out.println("✓ Created activity: " + activity.getTitle() + " (ID: " + activity.getId() + ")");
+        
+        // Add related activities (Shared Sahara Desert Tours)
+        Activity relatedActivity1 = Activity.builder()
+                .title("10 Days Morocco Tour from Tangier")
+                .slug(SlugUtil.generateSlug("10 Days Morocco Tour from Tangier"))
+                .shortDescription("Explore Morocco in 10 days starting from Tangier")
+                .fullDescription("A comprehensive 10-day journey through Morocco starting from Tangier, exploring the imperial cities, Sahara Desert, mountains, and coastal regions.")
+                .price(new BigDecimal("99.00"))
+                .duration("10 Days")
+                .location("Tangier to Morocco")
+                .category("Shared Sahara Desert Tours")
+                .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                .ratingAverage(new BigDecimal("4.8"))
+                .reviewCount(45)
+                .featured(true)
+                .active(true)
+                .maxGroupSize(16)
+                .availableSlots(32)
+                .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                .galleryImages(new ArrayList<>(Arrays.asList(
+                        "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                        "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200"
+                )))
+                .availability("Everyday")
+                .departureLocation("Tangier")
+                .returnLocation("Tangier")
+                .meetingTime("8 AM at your accommodation")
+                .whatToExpect("A comprehensive 10-day journey through Morocco exploring imperial cities, Sahara Desert, and coastal regions.")
+                .includedItems(new ArrayList<>(Arrays.asList(
+                        "Transportation in shared vehicle",
+                        "Professional driver/guide",
+                        "Hotel accommodation",
+                        "Breakfast and dinner"
+                )))
+                .excludedItems(new ArrayList<>(Arrays.asList(
+                        "Lunch and Drinks",
+                        "Tips and Gratuities",
+                        "Any Private Expenses"
+                )))
+                .itinerary(new ArrayList<>(Arrays.asList(
+                        "Day 1-10: Comprehensive tour through Morocco's highlights"
+                )))
+                .availableDates(new ArrayList<>(Arrays.asList(
+                        LocalDate.now().plusDays(5),
+                        LocalDate.now().plusDays(10),
+                        LocalDate.now().plusDays(15)
+                )))
+                .destination(saharaDesert)
+                .tourType(Activity.TourType.SHARED)
+                .build();
+        
+        Activity relatedActivity2 = Activity.builder()
+                .title("10 Days Authentic Morocco Journey from Casablanca")
+                .slug(SlugUtil.generateSlug("10 Days Authentic Morocco Journey from Casablanca"))
+                .shortDescription("Authentic 10-day journey through Morocco starting from Casablanca")
+                .fullDescription("An authentic 10-day journey through Morocco starting from Casablanca, experiencing the real culture, traditions, and beauty of Morocco.")
+                .price(new BigDecimal("99.00"))
+                .duration("10 Days")
+                .location("Casablanca to Morocco")
+                .category("Shared Sahara Desert Tours")
+                .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                .ratingAverage(new BigDecimal("4.8"))
+                .reviewCount(38)
+                .featured(true)
+                .active(true)
+                .maxGroupSize(16)
+                .availableSlots(32)
+                .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                .galleryImages(new ArrayList<>(Arrays.asList(
+                        "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                        "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200"
+                )))
+                .availability("Everyday")
+                .departureLocation("Casablanca")
+                .returnLocation("Casablanca")
+                .meetingTime("8 AM at your accommodation")
+                .whatToExpect("An authentic journey through Morocco experiencing real culture, traditions, and beauty.")
+                .includedItems(new ArrayList<>(Arrays.asList(
+                        "Transportation in shared vehicle",
+                        "Professional driver/guide",
+                        "Hotel accommodation",
+                        "Breakfast and dinner"
+                )))
+                .excludedItems(new ArrayList<>(Arrays.asList(
+                        "Lunch and Drinks",
+                        "Tips and Gratuities",
+                        "Any Private Expenses"
+                )))
+                .itinerary(new ArrayList<>(Arrays.asList(
+                        "Day 1-10: Authentic journey through Morocco's culture and traditions"
+                )))
+                .availableDates(new ArrayList<>(Arrays.asList(
+                        LocalDate.now().plusDays(5),
+                        LocalDate.now().plusDays(10),
+                        LocalDate.now().plusDays(15)
+                )))
+                .destination(saharaDesert)
+                .tourType(Activity.TourType.SHARED)
+                .build();
+        
+        activityRepository.saveAll(Arrays.asList(relatedActivity1, relatedActivity2));
+        System.out.println("Created 2 additional Sahara Desert activities");
     }
     
+    private void seed4DaysTourIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+        
+        if (saharaDesert == null) {
+            return;
+        }
+        
+        // Always call seed4DaysTour to ensure activity and translations are up to date
+        seed4DaysTour(saharaDesert);
+    }
+    
+    private void seed4DaysTour(Destination saharaDesert) {
+        String slug = SlugUtil.generateSlug("Tour from Fes to Marrakech 4 Days");
+        Optional<Activity> existingActivity = activityRepository.findBySlug(slug);
+        Activity activity;
+        boolean isNew = false;
+        
+        if (existingActivity.isPresent()) {
+            // Activity already exists - preserve all user modifications
+            activity = existingActivity.get();
+            // Only update critical fields when opt-in flags are true (default: preserve admin destination/active)
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !activity.getDestination().getName().equals("Sahara Desert"))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            // Skip creating new activity - preserve existing
+            return;
+        } else {
+            isNew = true;
+            activity = Activity.builder()
+                    .title("Tour from Fes to Marrakech 4 Days")
+                    .slug(slug)
+                    .shortDescription("Do you want a real change of scenery far from all the constraints of the modern world? This adventure trip in the desert of Morocco leads you to the heart of the Sahara Desert in landscapes of beauty.")
+                    .fullDescription("Do you want a real change of scenery far from all the constraints of the modern world? This adventure trip in the desert of Morocco leads you to the heart of the Sahara Desert in landscapes of beauty. You will fully enjoy the pleasure of roaming freely on some of the most beautiful slopes and enjoy the beautiful sunset in the Sahara. A short but full impression of this area of Morocco with its Mountains, gorges, valleys, Kasbahs, and Sahara desert. Not to mention the splendor of the night sky, the sunset, the sunrise, and the hospitality of the people.\n\nDuring this 4 Days Tour from Fes to Marrakech, you will explore the imperial cities, high atlas mountains, southern market town renowned Unesco Heritage site, or fortified kasbahs. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for the memorable Sahara Desert Tours to the Merzouga and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals.")
+                    .price(new BigDecimal("180.00"))
+                    .duration("4 Days")
+                    .location("From Fes to Marrakech")
+                    .category("Sahara Desert Tours")
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.8"))
+                    .reviewCount(68)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(16)
+                    .availableSlots(32)
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200"
+                    )))
+                    .availability("Everyday")
+                    .departureLocation("Fes")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 Minutes Before Departure time 8 am")
+                    .whatToExpect("A Tour from Fes to Marrakech is an unforgettable experience that will allow you to go through the history and the hidden culture and traditions of the daily life of Morocco as well as the discovery of the old imperial cities in Morocco.\n\nDo you want a real change of scenery far from all the constraints of the modern world? This adventure trip in the desert of Morocco leads you to the heart of the Sahara Desert in landscapes of beauty. You will fully enjoy the pleasure of roaming freely on some of the most beautiful slopes and enjoy the beautiful sunset in the Sahara. A short but full impression of this area of Morocco with its Mountains, gorges, green palm groves, Kasbahs, and Sahara desert. Not to mention the splendor of the night sky, the sunset, the camel ride experience, and the hospitality of the people.\n\nDuring this 4 Days Tour from Fes to Marrakech, you will explore the imperial cities, high atlas mountains, southern market town renowned Unesco Heritage site, or fortified kasbahs. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for the memorable Sahara Desert Tours to the Merzouga and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals.")
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Professional Driver/ Guide",
+                            "Overnight in Desert camp and Camel Ride",
+                            "Transport by an air-conditioned vehicle",
+                            "Hotel Pick-up and Drop-off",
+                            "Transportation insurance"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and Drinks",
+                            "Tips and Gratuities",
+                            "Any Private Expenses",
+                            "Travel insurance"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes for walking tour",
+                            "Sunscreen",
+                            "Your Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Day 1: Fes - Azrou - Ziz Valley - Sahara Desert. Your driver/guide will pick you up at your Fes accommodation around 8 am for a beautiful journey to the beautiful dunes of Merzouga, passing by Ifran known as \"the Switzerland Moroccan\", one hour drive, we will stop to visit the cedar forest in Azrou and see the monkeys climbing cedar trees. Then follow the path and cross the mountains of the Middle Atlas, passing by Midelt, stop at Ziz valley for pictures of stunning panoramic views over the gorges of the Ziz River, next to the city Erfoud of famous by fossil where are extracted the rocks containing fossils, Arrival at Merzouga dunes \"Erg Chebbi\" where we can feel the peace and tranquility of the desert. Relax and sip a mint tea enjoying the silence of the Sahara. Dinner and overnight at a hotel or Riad located at the foot of the dunes.",
+                            "Day 2: Sahara Desert Tour and Visit to nomads. After breakfast at your hotel, departure for a visit to the village (Khamlia) where live Gnawa of African origin, settle in the desert of Morocco in search of a better life, followed by a visit to a nomad family to learn about the traditions and lifestyle, afterward, we will head to the city of Rissani exploring its souk where you can get yourself a bath of local products and have lunch in a restaurant to taste the Berber pizza (Medfouna). In the afternoon after relaxing in your hotel, we will then, get ready for a new adventure experience, to a Berber camp in a lifetime experience, you will ride a camel through the golden dunes of Erg Chebbi, to assist to a wonderful sunset and spend a romantic night in the desert camp. After dinner, we gather around the fire and enjoy the desert night, perhaps with traditional Berber drums.",
+                            "Day 3: Sahara Desert - Todra Gorges - Dades Valley - Ouarzazate. Early wake up for a lifetime sunrise over the dunes, you will enjoy the change of sand color with the light of the sun. Prepare your cameras and your phones to take some memorable pictures. After taking photos, you will take shower and breakfast, and then, you will ride camels back to the hotel enjoying the silence and the charm of the dunes with the sunlight. Our Tour from Fes to Marrakech continues for a new journey through the palm groves and oasis direction to Tinghir and its amazing Todra Gorges and the big canyons 300 m high. After the visit, we will continue to Dades gorges above the valley. Many stops for photos along the valley, Then continue to Kalaat Magouna (Rose Valley) famous for its annual festival of roses that takes place every year in May. After visiting a female cooperative of roses, we will drive to Ouarzazate through the oasis of Skoura, where we will stop to visit the old Kasbah Amrideil (500 years old) then arrive in Ouarzazate. Dinner and overnight at the hotel.",
+                            "Day 4: Ouarzazate - Kasbah Ait Benhaddou - High Atlas - Marrakech. Breakfast at your Hotel or Riad in Ouarzazate, then, we will start a new journey of our Tour from Fes to Marrakech, our first stop for today is to visit the city's famous kasbah, including that of Taourirt marked as world heritage by Unesco and one of the beautiful palaces in the area. Not far from the city Ouarzazate Kasbah we will stop to visit the museum of movies and cinema studios, where many international movies are shot, like: (Gladiator, Lawrence d'Arabie, Games of the throne, the Babel…). 20 km later we will turn right to visit the famous kasbah of Ait Ben Haddou, after the visit we will continue crossing the high Atlas Mountains and its dramatic landscapes and the hidden Berber villages settled in the foothills of the massive valleys. (optional: we can have lunch in a local restaurant in the Tichka pass) else, we will continue to Marrakech if you want to use your left time visiting the amazing Majorelle gardens."
+                    )))
+                    .availableDates(new ArrayList<>(Arrays.asList(
+                            LocalDate.now().plusDays(3),
+                            LocalDate.now().plusDays(7),
+                            LocalDate.now().plusDays(10),
+                            LocalDate.now().plusDays(14),
+                            LocalDate.now().plusDays(17),
+                            LocalDate.now().plusDays(21)
+                    )))
+                    .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
+                    .destination(saharaDesert)
+                    .tourType(Activity.TourType.PRIVATE)
+                    .build();
+        }
+        
+        activityRepository.save(activity);
+        
+        // Create or update translations for the 4-day tour
+        seed4DaysTourTranslations(activity);
+    }
+    
+    private void seed4DaysTourTranslations(Activity activity) {
+        // Check if translations already exist and update them, otherwise create new ones
+        List<ActivityTranslation> translations = new ArrayList<>();
+        
+        // French translation
+        Optional<ActivityTranslation> existingFr = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "fr");
+        ActivityTranslation frTranslation;
+        if (existingFr.isPresent()) {
+            frTranslation = existingFr.get();
+            frTranslation.setTitle("Circuit de 4 jours de Fès à Marrakech");
+            frTranslation.setShortDescription("Voulez-vous un vrai changement de décor loin de toutes les contraintes du monde moderne ? Ce voyage d'aventure dans le désert du Maroc vous mène au cœur du désert du Sahara dans des paysages d'une beauté à couper le souffle.");
+            frTranslation.setFullDescription("Voulez-vous un vrai changement de décor loin de toutes les contraintes du monde moderne ? Ce voyage d'aventure dans le désert du Maroc vous mène au cœur du désert du Sahara dans des paysages d'une beauté à couper le souffle. Vous profiterez pleinement du plaisir de vous promener librement sur certaines des plus belles pentes et de profiter du magnifique coucher de soleil dans le Sahara. Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, vallées, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, le lever du soleil et l'hospitalité des gens.\n\nAu cours de ce circuit de 4 jours de Fès à Marrakech, vous explorerez les villes impériales, les hautes montagnes de l'Atlas, la ville de marché du sud réputée site du patrimoine de l'Unesco, ou les kasbahs fortifiés. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour les mémorables circuits du désert du Sahara à Merzouga et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.");
+            frTranslation.setLocation("De Fès à Marrakech");
+            frTranslation.setCategory("Circuits du désert du Sahara");
+            frTranslation.setDepartureLocation("Fès");
+            frTranslation.setReturnLocation("Marrakech");
+            frTranslation.setMeetingTime("15 minutes avant l'heure de départ à 8h");
+            frTranslation.setAvailability("Tous les jours");
+            frTranslation.setWhatToExpect("Un circuit de Fès à Marrakech est une expérience inoubliable qui vous permettra de découvrir l'histoire et la culture cachée et les traditions de la vie quotidienne du Maroc ainsi que la découverte des anciennes villes impériales du Maroc.\n\nVoulez-vous un vrai changement de décor loin de toutes les contraintes du monde moderne ? Ce voyage d'aventure dans le désert du Maroc vous mène au cœur du désert du Sahara dans des paysages d'une beauté à couper le souffle. Vous profiterez pleinement du plaisir de vous promener librement sur certaines des plus belles pentes et de profiter du magnifique coucher de soleil dans le Sahara. Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, palmeraies vertes, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, l'expérience de la balade à dos de chameau et l'hospitalité des gens.");
+        } else {
+            frTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("fr")
+                    .title("Circuit de 4 jours de Fès à Marrakech")
+                    .shortDescription("Voulez-vous un vrai changement de décor loin de toutes les contraintes du monde moderne ? Ce voyage d'aventure dans le désert du Maroc vous mène au cœur du désert du Sahara dans des paysages d'une beauté à couper le souffle.")
+                    .fullDescription("Voulez-vous un vrai changement de décor loin de toutes les contraintes du monde moderne ? Ce voyage d'aventure dans le désert du Maroc vous mène au cœur du désert du Sahara dans des paysages d'une beauté à couper le souffle. Vous profiterez pleinement du plaisir de vous promener librement sur certaines des plus belles pentes et de profiter du magnifique coucher de soleil dans le Sahara. Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, vallées, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, le lever du soleil et l'hospitalité des gens.\n\nAu cours de ce circuit de 4 jours de Fès à Marrakech, vous explorerez les villes impériales, les hautes montagnes de l'Atlas, la ville de marché du sud réputée site du patrimoine de l'Unesco, ou les kasbahs fortifiés. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour les mémorables circuits du désert du Sahara à Merzouga et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.")
+                    .location("De Fès à Marrakech")
+                    .category("Circuits du désert du Sahara")
+                    .departureLocation("Fès")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutes avant l'heure de départ à 8h")
+                    .availability("Tous les jours")
+                    .whatToExpect("Un circuit de Fès à Marrakech est une expérience inoubliable qui vous permettra de découvrir l'histoire et la culture cachée et les traditions de la vie quotidienne du Maroc ainsi que la découverte des anciennes villes impériales du Maroc.\n\nVoulez-vous un vrai changement de décor loin de toutes les contraintes du monde moderne ? Ce voyage d'aventure dans le désert du Maroc vous mène au cœur du désert du Sahara dans des paysages d'une beauté à couper le souffle. Vous profiterez pleinement du plaisir de vous promener librement sur certaines des plus belles pentes et de profiter du magnifique coucher de soleil dans le Sahara. Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, palmeraies vertes, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, l'expérience de la balade à dos de chameau et l'hospitalité des gens.")
+                    .build();
+        }
+        translations.add(frTranslation);
+        
+        // Spanish translation
+        Optional<ActivityTranslation> existingEs = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "es");
+        ActivityTranslation esTranslation;
+        if (existingEs.isPresent()) {
+            esTranslation = existingEs.get();
+            esTranslation.setTitle("Tour de 4 días de Fez a Marrakech");
+            esTranslation.setShortDescription("¿Quieres un verdadero cambio de escenario lejos de todas las limitaciones del mundo moderno? Este viaje de aventura en el desierto de Marruecos te lleva al corazón del desierto del Sahara en paisajes de belleza.");
+            esTranslation.setFullDescription("¿Quieres un verdadero cambio de escenario lejos de todas las limitaciones del mundo moderno? Este viaje de aventura en el desierto de Marruecos te lleva al corazón del desierto del Sahara en paisajes de belleza. Disfrutarás plenamente del placer de deambular libremente por algunas de las pendientes más hermosas y disfrutar de la hermosa puesta de sol en el Sahara. Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, valles, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, el amanecer y la hospitalidad de la gente.\n\nDurante este Tour de 4 días de Fez a Marrakech, explorarás las ciudades imperiales, las altas montañas del Atlas, la ciudad comercial del sur reconocida como sitio del Patrimonio de la Unesco, o las kasbahs fortificadas. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para los memorables Tours del Desierto del Sahara a Merzouga y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.");
+            esTranslation.setLocation("De Fez a Marrakech");
+            esTranslation.setCategory("Tours del Desierto del Sahara");
+            esTranslation.setDepartureLocation("Fez");
+            esTranslation.setReturnLocation("Marrakech");
+            esTranslation.setMeetingTime("15 minutos antes de la hora de salida a las 8 am");
+            esTranslation.setAvailability("Todos los días");
+            esTranslation.setWhatToExpect("Un tour de Fez a Marrakech es una experiencia inolvidable que te permitirá conocer la historia y la cultura oculta y las tradiciones de la vida diaria de Marruecos, así como el descubrimiento de las antiguas ciudades imperiales de Marruecos.\n\n¿Quieres un verdadero cambio de escenario lejos de todas las limitaciones del mundo moderno? Este viaje de aventura en el desierto de Marruecos te lleva al corazón del desierto del Sahara en paisajes de belleza. Disfrutarás plenamente del placer de deambular libremente por algunas de las pendientes más hermosas y disfrutar de la hermosa puesta de sol en el Sahara. Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, palmeras verdes, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, la experiencia del paseo en camello y la hospitalidad de la gente.");
+        } else {
+            esTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("es")
+                    .title("Tour de 4 días de Fez a Marrakech")
+                    .shortDescription("¿Quieres un verdadero cambio de escenario lejos de todas las limitaciones del mundo moderno? Este viaje de aventura en el desierto de Marruecos te lleva al corazón del desierto del Sahara en paisajes de belleza.")
+                    .fullDescription("¿Quieres un verdadero cambio de escenario lejos de todas las limitaciones del mundo moderno? Este viaje de aventura en el desierto de Marruecos te lleva al corazón del desierto del Sahara en paisajes de belleza. Disfrutarás plenamente del placer de deambular libremente por algunas de las pendientes más hermosas y disfrutar de la hermosa puesta de sol en el Sahara. Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, valles, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, el amanecer y la hospitalidad de la gente.\n\nDurante este Tour de 4 días de Fez a Marrakech, explorarás las ciudades imperiales, las altas montañas del Atlas, la ciudad comercial del sur reconocida como sitio del Patrimonio de la Unesco, o las kasbahs fortificadas. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para los memorables Tours del Desierto del Sahara a Merzouga y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.")
+                    .location("De Fez a Marrakech")
+                    .category("Tours del Desierto del Sahara")
+                    .departureLocation("Fez")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutos antes de la hora de salida a las 8 am")
+                    .availability("Todos los días")
+                    .whatToExpect("Un tour de Fez a Marrakech es una experiencia inolvidable que te permitirá conocer la historia y la cultura oculta y las tradiciones de la vida diaria de Marruecos, así como el descubrimiento de las antiguas ciudades imperiales de Marruecos.\n\n¿Quieres un verdadero cambio de escenario lejos de todas las limitaciones del mundo moderno? Este viaje de aventura en el desierto de Marruecos te lleva al corazón del desierto del Sahara en paisajes de belleza. Disfrutarás plenamente del placer de deambular libremente por algunas de las pendientes más hermosas y disfrutar de la hermosa puesta de sol en el Sahara. Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, palmeras verdes, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, la experiencia del paseo en camello y la hospitalidad de la gente.")
+                    .build();
+        }
+        translations.add(esTranslation);
+        
+        // German translation
+        Optional<ActivityTranslation> existingDe = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "de");
+        ActivityTranslation deTranslation;
+        if (existingDe.isPresent()) {
+            deTranslation = existingDe.get();
+            deTranslation.setTitle("4-Tage-Tour von Fes nach Marrakesch");
+            deTranslation.setShortDescription("Möchten Sie eine echte Veränderung der Szenerie fernab aller Zwänge der modernen Welt? Diese Abenteuerreise in die Wüste Marokkos führt Sie ins Herz der Sahara in Landschaften von atemberaubender Schönheit.");
+            deTranslation.setFullDescription("Möchten Sie eine echte Veränderung der Szenerie fernab aller Zwänge der modernen Welt? Diese Abenteuerreise in die Wüste Marokkos führt Sie ins Herz der Sahara in Landschaften von atemberaubender Schönheit. Sie werden das Vergnügen genießen, frei auf einigen der schönsten Hänge zu wandern und den wunderschönen Sonnenuntergang in der Sahara zu genießen. Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, Tälern, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Sonnenaufgang und der Gastfreundschaft der Menschen.\n\nWährend dieser 4-Tage-Tour von Fes nach Marrakesch erkunden Sie die kaiserlichen Städte, das Hohe Atlasgebirge, die südliche Marktstadt, die als UNESCO-Weltkulturerbe bekannt ist, oder die befestigten Kasbahs. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für die unvergesslichen Sahara-Wüstentouren nach Merzouga und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.");
+            deTranslation.setLocation("Von Fes nach Marrakesch");
+            deTranslation.setCategory("Sahara-Wüstentouren");
+            deTranslation.setDepartureLocation("Fes");
+            deTranslation.setReturnLocation("Marrakesch");
+            deTranslation.setMeetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr");
+            deTranslation.setAvailability("Täglich");
+            deTranslation.setWhatToExpect("Eine Tour von Fes nach Marrakesch ist ein unvergessliches Erlebnis, das es Ihnen ermöglicht, durch die Geschichte und die verborgene Kultur und Traditionen des täglichen Lebens in Marokko zu gehen sowie die Entdeckung der alten kaiserlichen Städte in Marokko.\n\nMöchten Sie eine echte Veränderung der Szenerie fernab aller Zwänge der modernen Welt? Diese Abenteuerreise in die Wüste Marokkos führt Sie ins Herz der Sahara in Landschaften von atemberaubender Schönheit. Sie werden das Vergnügen genießen, frei auf einigen der schönsten Hänge zu wandern und den wunderschönen Sonnenuntergang in der Sahara zu genießen. Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, grünen Palmenoasen, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Kamelritt-Erlebnis und der Gastfreundschaft der Menschen.");
+        } else {
+            deTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("de")
+                    .title("4-Tage-Tour von Fes nach Marrakesch")
+                    .shortDescription("Möchten Sie eine echte Veränderung der Szenerie fernab aller Zwänge der modernen Welt? Diese Abenteuerreise in die Wüste Marokkos führt Sie ins Herz der Sahara in Landschaften von atemberaubender Schönheit.")
+                    .fullDescription("Möchten Sie eine echte Veränderung der Szenerie fernab aller Zwänge der modernen Welt? Diese Abenteuerreise in die Wüste Marokkos führt Sie ins Herz der Sahara in Landschaften von atemberaubender Schönheit. Sie werden das Vergnügen genießen, frei auf einigen der schönsten Hänge zu wandern und den wunderschönen Sonnenuntergang in der Sahara zu genießen. Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, Tälern, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Sonnenaufgang und der Gastfreundschaft der Menschen.\n\nWährend dieser 4-Tage-Tour von Fes nach Marrakesch erkunden Sie die kaiserlichen Städte, das Hohe Atlasgebirge, die südliche Marktstadt, die als UNESCO-Weltkulturerbe bekannt ist, oder die befestigten Kasbahs. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für die unvergesslichen Sahara-Wüstentouren nach Merzouga und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.")
+                    .location("Von Fes nach Marrakesch")
+                    .category("Sahara-Wüstentouren")
+                    .departureLocation("Fes")
+                    .returnLocation("Marrakesch")
+                    .meetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr")
+                    .availability("Täglich")
+                    .whatToExpect("Eine Tour von Fes nach Marrakesch ist ein unvergessliches Erlebnis, das es Ihnen ermöglicht, durch die Geschichte und die verborgene Kultur und Traditionen des täglichen Lebens in Marokko zu gehen sowie die Entdeckung der alten kaiserlichen Städte in Marokko.\n\nMöchten Sie eine echte Veränderung der Szenerie fernab aller Zwänge der modernen Welt? Diese Abenteuerreise in die Wüste Marokkos führt Sie ins Herz der Sahara in Landschaften von atemberaubender Schönheit. Sie werden das Vergnügen genießen, frei auf einigen der schönsten Hänge zu wandern und den wunderschönen Sonnenuntergang in der Sahara zu genießen. Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, grünen Palmenoasen, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Kamelritt-Erlebnis und der Gastfreundschaft der Menschen.")
+                    .build();
+        }
+        translations.add(deTranslation);
+        
+        // Save all translations
+        activityTranslationRepository.saveAll(translations);
+    }
+    
+    private void seed4DaysDesertTripFromMarrakeshIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+        
+        if (saharaDesert == null) {
+            return;
+        }
+        
+        // Always call seed4DaysDesertTripFromMarrakesh to ensure activity and translations are up to date
+        seed4DaysDesertTripFromMarrakesh(saharaDesert);
+    }
+    
+    private void seed4DaysDesertTripFromMarrakesh(Destination saharaDesert) {
+        String slug = SlugUtil.generateSlug("4 Days Desert Trip from Marrakesh");
+        Optional<Activity> existingActivity = activityRepository.findBySlug(slug);
+        Activity activity;
+        boolean isNew = false;
+        
+        if (existingActivity.isPresent()) {
+            // Activity already exists - preserve all user modifications
+            activity = existingActivity.get();
+            // Only update critical fields when opt-in flags are true (default: preserve admin destination/active)
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !activity.getDestination().getName().equals("Sahara Desert"))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            // Skip creating new activity - preserve existing
+            return;
+        } else {
+            isNew = true;
+            activity = Activity.builder()
+                    .title("4 Days Desert Trip from Marrakesh")
+                    .slug(slug)
+                    .shortDescription("A short but full impression of this area of Morocco with its Mountains, gorges, valleys, Kasbahs, and Sahara desert. Not to mention the splendor of the night sky, the sunset, the sunrise, and the hospitality of the people.")
+                    .fullDescription("Marrakesh is home to some of the most extraordinary structures including the Kasbah, a number of brilliant mosques, an open-air theatre, palaces, and gardens that attract tourists from all over the world. From reasonable shopping in famous Medina souks to historical sightseeing of the many museums and monuments, this place has it all. The High Atlas region of Marakkech provides access to the picturesque mountain beauty.\n\nThis 4 Day Desert Trip from Marrakech to Fes will take you on a Tour from Marrakech 4 days to explore the high atlas mountains, southern market town renowned Unesco Heritage site, or fortified kasbahs. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for the memorable Sahara Desert Tours 4 days to the Merzouga and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals.")
+                    .price(new BigDecimal("99.00"))
+                    .duration("4 Days")
+                    .location("Marrakech to Sahara Desert")
+                    .category("Sahara Desert Tours")
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.8"))
+                    .reviewCount(1709)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(16)
+                    .availableSlots(32)
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200"
+                    )))
+                    .availability("Everyday")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 Minutes Before Departure time 8 am")
+                    .whatToExpect("Marrakech is home to some of the most extraordinary structures including the Kasbah, a number of brilliant mosques, an open-air theatre, palaces, and gardens that attract tourists from all over the world. From reasonable shopping in famous Medina souks to historical sightseeing of the many museums and monuments, this place has it all. The High Atlas region of Marakkech provides access to the picturesque mountain beauty.\n\nDuring this 4 Day Desert Trip from Marrakech, you get a chance to discover the imperial cities of Marrakech as well as the Sahara Desert, it's a mix of culture, history, and Unesco Heritage site. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for a memorable trip to the Sahara desert and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals.")
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Professional Driver/ Guide",
+                            "Overnight in Desert camp and Camel Ride",
+                            "Transport by an air-conditioned vehicle",
+                            "Hotel Pick-up and Drop-off",
+                            "Transportation insurance"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and Drinks",
+                            "Tips and Gratuities",
+                            "Any Private Expenses",
+                            "Travel insurance"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes for walking tour",
+                            "Sunscreen",
+                            "Your Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Day 1: MARRAKECH - AIT BEN HADDOU KASBAH - OUARZAZATE - ROSES VALLEY - DADES GORGES. Your driver/guide will pick you up at your Marrakech accommodation at 8 am and drive through the route passes through valleys and deserts allowing you to enjoy spectacular views from the Atlas Mountains. We will go through the Tizi n'Tichka, a pass at an altitude of 2,260 meters: the highest pass in North Africa and it has become famous for the breathtaking view it offers. Halfway, you will benefit from a free visit to the famous Kasbah Ait Ben Haddou, a fortified city classified as a UNESCO World Heritage Site. Lunch in a local restaurant overlooking the kasbah, and then we will continue our journey towards Ouarzazate known as the gate of the desert, where we will stop at the cinema studios for a short visit (optional), and then, we will continue to the heart of the city to discover another hidden gem, the kasbah Taourirte a world heritage site by UNESCO and the house of the leader Pacha el glamour, after a visit of the kasbah we will continue our journey towards our final destination for today the Dades gorges, on the road we will stop at the rises valley for a short visit to a local cooperative producing the rose water and its products. After a short drive, we will arrive at the Dades gorges where we will spend the night in a local hotel or Riad",
+                            "Day 2: DADES GORGES - TODRA GORGES - ERFOUD - MERZOUGA DESERT. After breakfast at your hotel, we will start our day with a visit to the Dades Gorges, then, we will head towards Todra Gorges, the favorite place for rock climbers. After a visit to the gorges and the palm oasis of Todra, we continue our journey, following the ancient Caravan trade routes to the Sahara passing through a series of fortified villages with outstanding pre-Saharan architecture. The route to Erfoud is one of the most pleasant of all the southern routes. The city is in a dry red built of the desert and was built by the French as a central administration city. It is known for its rich black marble fossils. After Erfoud, we will continue our day heading towards the spectacular dunes of Merzouga. At our arrival, we will be welcomed by a mint tea, then, get ready for a new adventure experience, to a Berber camp in a lifetime experience, you will ride a camel through the golden dunes of Erg Chebbi, to assist to a wonderful sunset and spend a romantic night in desert camp. After dinner, we gather around the fire and enjoy the desert night, perhaps with traditional Berber drums.",
+                            "Day 3: MERZOUGA - RISSANI - ANTI ATLAS - DRAA VALLEY - ZAGORA. Wake up early before sunrise to enjoy the sunrise from the Great Dune of the Sahara Desert. Return to the hotel in dromedaries or in 4WD to meet your driver to start a new journey to Rissani and then to Alnif and Tazzarine until N'Kob; stop for lunch. The trip continues through the palm-lined Draa Valley until we arrive at Zagora, a very important point on the old caravan route and very famous for the date's production. Dinner and overnight in a charming hotel.",
+                            "Day 4: ZAGORA - OUARZAZATE - MARRAKECH. After breakfast, you will have enough time to visit Tamegroute and its old Koran library and subterranean Kasbah. After the visit, we will return through the Draa- river valley to Quarzazate (stop for lunch). The journey will end in Marrakech with a scenic drive via the High Atlas Mountains."
+                    )))
+                    .availableDates(new ArrayList<>(Arrays.asList(
+                            LocalDate.now().plusDays(1),
+                            LocalDate.now().plusDays(2),
+                            LocalDate.now().plusDays(3),
+                            LocalDate.now().plusDays(4),
+                            LocalDate.now().plusDays(5),
+                            LocalDate.now().plusDays(6),
+                            LocalDate.now().plusDays(7),
+                            LocalDate.now().plusDays(8),
+                            LocalDate.now().plusDays(9),
+                            LocalDate.now().plusDays(10)
+                    )))
+                    .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
+                    .destination(saharaDesert)
+                    .tourType(Activity.TourType.SHARED)
+                    .build();
+        }
+        
+        activityRepository.save(activity);
+        
+        // Create or update translations for the 4-day desert trip from Marrakesh
+        seed4DaysDesertTripFromMarrakeshTranslations(activity);
+    }
+    
+    private void seed4DaysDesertTripFromMarrakeshTranslations(Activity activity) {
+        // Check if translations already exist and update them, otherwise create new ones
+        List<ActivityTranslation> translations = new ArrayList<>();
+        
+        // French translation
+        Optional<ActivityTranslation> existingFr = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "fr");
+        ActivityTranslation frTranslation;
+        if (existingFr.isPresent()) {
+            frTranslation = existingFr.get();
+            frTranslation.setTitle("Circuit de 4 jours dans le désert depuis Marrakech");
+            frTranslation.setShortDescription("Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, vallées, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, le lever du soleil et l'hospitalité des gens.");
+            frTranslation.setFullDescription("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nCe circuit de 4 jours dans le désert depuis Marrakech jusqu'à Fès vous emmènera dans un circuit de 4 jours depuis Marrakech pour explorer les hautes montagnes de l'Atlas, la ville de marché du sud réputée site du patrimoine de l'Unesco, ou les kasbahs fortifiés. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour les mémorables circuits du désert du Sahara de 4 jours à Merzouga et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.");
+            frTranslation.setLocation("Marrakech vers le désert du Sahara");
+            frTranslation.setCategory("Circuits du désert du Sahara");
+            frTranslation.setDepartureLocation("Marrakech");
+            frTranslation.setReturnLocation("Marrakech");
+            frTranslation.setMeetingTime("15 minutes avant l'heure de départ à 8h");
+            frTranslation.setAvailability("Tous les jours");
+            frTranslation.setWhatToExpect("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nAu cours de ce circuit de 4 jours dans le désert depuis Marrakech, vous aurez l'occasion de découvrir les villes impériales de Marrakech ainsi que le désert du Sahara, c'est un mélange de culture, d'histoire et de site du patrimoine de l'Unesco. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour un voyage mémorable dans le désert du Sahara et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.");
+        } else {
+            frTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("fr")
+                    .title("Circuit de 4 jours dans le désert depuis Marrakech")
+                    .shortDescription("Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, vallées, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, le lever du soleil et l'hospitalité des gens.")
+                    .fullDescription("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nCe circuit de 4 jours dans le désert depuis Marrakech jusqu'à Fès vous emmènera dans un circuit de 4 jours depuis Marrakech pour explorer les hautes montagnes de l'Atlas, la ville de marché du sud réputée site du patrimoine de l'Unesco, ou les kasbahs fortifiés. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour les mémorables circuits du désert du Sahara de 4 jours à Merzouga et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.")
+                    .location("Marrakech vers le désert du Sahara")
+                    .category("Circuits du désert du Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutes avant l'heure de départ à 8h")
+                    .availability("Tous les jours")
+                    .whatToExpect("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nAu cours de ce circuit de 4 jours dans le désert depuis Marrakech, vous aurez l'occasion de découvrir les villes impériales de Marrakech ainsi que le désert du Sahara, c'est un mélange de culture, d'histoire et de site du patrimoine de l'Unesco. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour un voyage mémorable dans le désert du Sahara et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.")
+                    .build();
+        }
+        translations.add(frTranslation);
+        
+        // Spanish translation
+        Optional<ActivityTranslation> existingEs = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "es");
+        ActivityTranslation esTranslation;
+        if (existingEs.isPresent()) {
+            esTranslation = existingEs.get();
+            esTranslation.setTitle("Viaje de 4 días al desierto desde Marrakech");
+            esTranslation.setShortDescription("Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, valles, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, el amanecer y la hospitalidad de la gente.");
+            esTranslation.setFullDescription("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nEste viaje de 4 días al desierto desde Marrakech hasta Fez te llevará en un tour de 4 días desde Marrakech para explorar las altas montañas del Atlas, la ciudad comercial del sur reconocida como sitio del Patrimonio de la Unesco, o las kasbahs fortificadas. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para los memorables tours del desierto del Sahara de 4 días a Merzouga y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.");
+            esTranslation.setLocation("Marrakech al desierto del Sahara");
+            esTranslation.setCategory("Tours del Desierto del Sahara");
+            esTranslation.setDepartureLocation("Marrakech");
+            esTranslation.setReturnLocation("Marrakech");
+            esTranslation.setMeetingTime("15 minutos antes de la hora de salida a las 8 am");
+            esTranslation.setAvailability("Todos los días");
+            esTranslation.setWhatToExpect("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nDurante este viaje de 4 días al desierto desde Marrakech, tendrás la oportunidad de descubrir las ciudades imperiales de Marrakech así como el desierto del Sahara, es una mezcla de cultura, historia y sitio del Patrimonio de la Unesco. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para un viaje memorable al desierto del Sahara y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.");
+        } else {
+            esTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("es")
+                    .title("Viaje de 4 días al desierto desde Marrakech")
+                    .shortDescription("Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, valles, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, el amanecer y la hospitalidad de la gente.")
+                    .fullDescription("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nEste viaje de 4 días al desierto desde Marrakech hasta Fez te llevará en un tour de 4 días desde Marrakech para explorar las altas montañas del Atlas, la ciudad comercial del sur reconocida como sitio del Patrimonio de la Unesco, o las kasbahs fortificadas. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para los memorables tours del desierto del Sahara de 4 días a Merzouga y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.")
+                    .location("Marrakech al desierto del Sahara")
+                    .category("Tours del Desierto del Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutos antes de la hora de salida a las 8 am")
+                    .availability("Todos los días")
+                    .whatToExpect("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nDurante este viaje de 4 días al desierto desde Marrakech, tendrás la oportunidad de descubrir las ciudades imperiales de Marrakech así como el desierto del Sahara, es una mezcla de cultura, historia y sitio del Patrimonio de la Unesco. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para un viaje memorable al desierto del Sahara y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.")
+                    .build();
+        }
+        translations.add(esTranslation);
+        
+        // German translation
+        Optional<ActivityTranslation> existingDe = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "de");
+        ActivityTranslation deTranslation;
+        if (existingDe.isPresent()) {
+            deTranslation = existingDe.get();
+            deTranslation.setTitle("4-Tage-Wüstentour ab Marrakesch");
+            deTranslation.setShortDescription("Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, Tälern, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Sonnenaufgang und der Gastfreundschaft der Menschen.");
+            deTranslation.setFullDescription("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nDiese 4-Tage-Wüstentour von Marrakesch nach Fes führt Sie auf eine 4-Tage-Tour von Marrakesch, um die hohen Atlas-Berge, die südliche Marktstadt, die als UNESCO-Weltkulturerbe bekannt ist, oder die befestigten Kasbahs zu erkunden. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für die unvergesslichen 4-Tage-Sahara-Wüstentouren nach Merzouga und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.");
+            deTranslation.setLocation("Marrakesch zur Sahara-Wüste");
+            deTranslation.setCategory("Sahara-Wüstentouren");
+            deTranslation.setDepartureLocation("Marrakesch");
+            deTranslation.setReturnLocation("Marrakesch");
+            deTranslation.setMeetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr");
+            deTranslation.setAvailability("Täglich");
+            deTranslation.setWhatToExpect("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nWährend dieser 4-Tage-Wüstentour von Marrakesch haben Sie die Gelegenheit, die kaiserlichen Städte von Marrakesch sowie die Sahara-Wüste zu entdecken, es ist eine Mischung aus Kultur, Geschichte und UNESCO-Weltkulturerbe. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für eine unvergessliche Reise in die Sahara-Wüste und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.");
+        } else {
+            deTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("de")
+                    .title("4-Tage-Wüstentour ab Marrakesch")
+                    .shortDescription("Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, Tälern, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Sonnenaufgang und der Gastfreundschaft der Menschen.")
+                    .fullDescription("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nDiese 4-Tage-Wüstentour von Marrakesch nach Fes führt Sie auf eine 4-Tage-Tour von Marrakesch, um die hohen Atlas-Berge, die südliche Marktstadt, die als UNESCO-Weltkulturerbe bekannt ist, oder die befestigten Kasbahs zu erkunden. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für die unvergesslichen 4-Tage-Sahara-Wüstentouren nach Merzouga und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.")
+                    .location("Marrakesch zur Sahara-Wüste")
+                    .category("Sahara-Wüstentouren")
+                    .departureLocation("Marrakesch")
+                    .returnLocation("Marrakesch")
+                    .meetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr")
+                    .availability("Täglich")
+                    .whatToExpect("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nWährend dieser 4-Tage-Wüstentour von Marrakesch haben Sie die Gelegenheit, die kaiserlichen Städte von Marrakesch sowie die Sahara-Wüste zu entdecken, es ist eine Mischung aus Kultur, Geschichte und UNESCO-Weltkulturerbe. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für eine unvergessliche Reise in die Sahara-Wüste und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.")
+                    .build();
+        }
+        translations.add(deTranslation);
+        
+        // Save all translations
+        activityTranslationRepository.saveAll(translations);
+    }
+    
+    private void seed3DaysDesertTripFromMarrakechToFesIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+        
+        if (saharaDesert == null) {
+            return;
+        }
+        
+        // Always call seed3DaysDesertTripFromMarrakechToFes to ensure activity and translations are up to date
+        seed3DaysDesertTripFromMarrakechToFes(saharaDesert);
+    }
+    
+    private void seed3DaysDesertTripFromMarrakechToFes(Destination saharaDesert) {
+        String slug = SlugUtil.generateSlug("3 Day Sahara Desert Trip from Marrakech to Fes");
+        Optional<Activity> existingActivity = activityRepository.findBySlug(slug);
+        Activity activity;
+        boolean isNew = false;
+        
+        if (existingActivity.isPresent()) {
+            // Activity already exists - preserve all user modifications
+            activity = existingActivity.get();
+            // Only update critical fields when opt-in flags are true (default: preserve admin destination/active)
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !activity.getDestination().getName().equals("Sahara Desert"))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            // Skip creating new activity - preserve existing
+            return;
+        } else {
+            isNew = true;
+            activity = Activity.builder()
+                    .title("3 Day Sahara Desert Trip from Marrakech to Fes")
+                    .slug(slug)
+                    .shortDescription("A short but full impression of this area of Morocco with its Mountains, gorges, valleys, Kasbahs, and Sahara desert. Not to mention the splendor of the night sky, the sunset, the sunrise, and the hospitality of the people.")
+                    .fullDescription("Marrakesh is home to some of the most extraordinary structures including the Kasbah, a number of brilliant mosques, an open-air theatre, palaces, and gardens that attract tourists from all over the world. From reasonable shopping in famous Medina souks to historical sightseeing of the many museums and monuments, this place has it all. The High Atlas region of Marakkech provides access to the picturesque mountain beauty.\n\nThis 3 Day Sahara Desert Trip from Marrakech to Fes will take you on a Tour from Marrakech to Fes to explore the high atlas mountains, southern market town renowned Unesco Heritage site, or fortified kasbahs. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for the memorable Sahara Desert Tours to the Merzouga and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals.")
+                    .price(new BigDecimal("89.00"))
+                    .duration("3 Days")
+                    .location("Marrakech to Fes")
+                    .category("Sahara Desert Tours")
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.8"))
+                    .reviewCount(1508)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(16)
+                    .availableSlots(32)
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200"
+                    )))
+                    .availability("Everyday")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Fes")
+                    .meetingTime("15 Minutes Before Departure time 8 am")
+                    .whatToExpect("Marrakech is home to some of the most extraordinary structures including the Kasbah, a number of brilliant mosques, an open-air theatre, palaces, and gardens that attract tourists from all over the world. From reasonable shopping in famous Medina souks to historical sightseeing of the many museums and monuments, this place has it all. The High Atlas region of Marakkech provides access to the picturesque mountain beauty.\n\nDuring this 3 Day Sahara Desert Trip from Marrakech to Fes, you get a chance to discover the imperial cities of Marrakech and Fes as well as the Sahara Desert, it's a mix of culture, history, and Unesco Heritage site. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for a memorable trip to the Sahara desert and visit the gorges of Dades and Todra, experience a camel ride and go through the sand dunes of Merzouga in a caravan trail to watch a wonderful sunset over the big dunes, spend a night in the luxury desert camp and enjoy moments with locals.")
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Professional Driver/ Guide",
+                            "Overnight in Desert camp and Camel Ride",
+                            "Transport by an air-conditioned vehicle",
+                            "Hotel Pick-up and Drop-off",
+                            "Transportation insurance"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and Drinks",
+                            "Tips and Gratuities",
+                            "Any Private Expenses",
+                            "Travel insurance"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes for walking tour",
+                            "Sunscreen",
+                            "Your Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Day 1: MARRAKECH - AIT BEN HADDOU KASBAH - OUARZAZATE - ROSES VALLEY - DADES GORGES. Your driver/guide will pick you up at your Marrakech accommodation at 8 am and drive through the route passes through valleys and deserts allowing you to enjoy spectacular views from the Atlas Mountains. We will go through the Tizi n'Tichka, a pass at an altitude of 2,260 meters: the highest pass in North Africa and it has become famous for the breathtaking view it offers. Halfway, you will benefit from a free visit to the famous Kasbah Ait Ben Haddou, a fortified city classified as a UNESCO World Heritage Site. Lunch in a local restaurant overlooking the kasbah, and then we will continue our journey towards Ouarzazate known as the gate of the desert, where we will stop at the cinema studios for a short visit (optional), and then, we will continue to the heart of the city to discover another hidden gem, the kasbah Taourirte a world heritage site by UNESCO and the house of the leader Pacha el glamour, after a visit of the kasbah we will continue our journey towards our final destination for today the Dades gorges, on the road we will stop at the rises valley for a short visit to a local cooperative producing the rose water and its products. After a short drive, we will arrive at the Dades gorges where we will spend the night in a local hotel or Riad",
+                            "Day 2: DADES GORGES - TODRA GORGES - ERFOUD - MERZOUGA DESERT. After breakfast at your hotel, we will start our day with a visit to the Dades Gorges, then, we will head towards Todra Gorges, the favorite place for rock climbers. After a visit to the gorges and the palm oasis of Todra, we continue our journey, following the ancient Caravan trade routes to the Sahara passing through a series of fortified villages with outstanding pre-Saharan architecture. The route to Erfoud is one of the most pleasant of all the southern routes. The city is in a dry red built of the desert and was built by the French as a central administration city. It is known for its rich black marble fossils. After Erfoud, we will continue our day heading towards the spectacular dunes of Merzouga. At our arrival, we will be welcomed by a mint tea, then, get ready for a new adventure experience, to a Berber camp in a lifetime experience, you will ride a camel through the golden dunes of Erg Chebbi, to assist to a wonderful sunset and spend a romantic night in desert camp. After dinner, we gather around the fire and enjoy the desert night, perhaps with traditional Berber drums.",
+                            "Day 3: MERZOUGA - ZIZ VALLEY - CEDAR FOREST - IFRANE - FES. Wake up early before sunrise to enjoy the sunrise from the Great Dune of the Sahara Desert. Return to the hotel in dromedaries or in 4WD to meet your driver to start a new journey to Fez, which is considered to be Morocco's cultural and spiritual center with a massive history that goes right back to the 9th century. This city comprises many beautifully preserved historical buildings, including mosques, palaces, and fountains all fixed in a maze of narrow streets and passages which are interesting to explore. We will drive through the great palm grove of Ziz valley, and Errachidia, then, continues through the middle atlas mountains to reach the city of Midelt, where we will have a stop for lunch. After lunch we will head towards the cedar forest in Azrou, there, we will stop to meet the wild Barbary apes (macaque) and then continue to Ifrane, referred to as the small Switzerland of Morocco, we will stop for cafe and explore the beautiful town before driving to Fes via the green hills of the Middle Atlas. We will arrive at Fes around 6 pm in the afternoon."
+                    )))
+                    .availableDates(new ArrayList<>(Arrays.asList(
+                            LocalDate.now().plusDays(1),
+                            LocalDate.now().plusDays(2),
+                            LocalDate.now().plusDays(3),
+                            LocalDate.now().plusDays(4),
+                            LocalDate.now().plusDays(5),
+                            LocalDate.now().plusDays(6),
+                            LocalDate.now().plusDays(7),
+                            LocalDate.now().plusDays(8),
+                            LocalDate.now().plusDays(9),
+                            LocalDate.now().plusDays(10)
+                    )))
+                    .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
+                    .destination(saharaDesert)
+                    .tourType(Activity.TourType.SHARED)
+                    .build();
+        }
+        
+        activityRepository.save(activity);
+        
+        // Create or update translations for the 3-day desert trip from Marrakech to Fes
+        seed3DaysDesertTripFromMarrakechToFesTranslations(activity);
+    }
+    
+    private void seed3DaysDesertTripFromMarrakechToFesTranslations(Activity activity) {
+        // Check if translations already exist and update them, otherwise create new ones
+        List<ActivityTranslation> translations = new ArrayList<>();
+        
+        // French translation
+        Optional<ActivityTranslation> existingFr = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "fr");
+        ActivityTranslation frTranslation;
+        if (existingFr.isPresent()) {
+            frTranslation = existingFr.get();
+            frTranslation.setTitle("Circuit de 3 jours dans le désert du Sahara depuis Marrakech jusqu'à Fès");
+            frTranslation.setShortDescription("Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, vallées, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, le lever du soleil et l'hospitalité des gens.");
+            frTranslation.setFullDescription("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nCe circuit de 3 jours dans le désert du Sahara depuis Marrakech jusqu'à Fès vous emmènera dans un circuit de Marrakech à Fès pour explorer les hautes montagnes de l'Atlas, la ville de marché du sud réputée site du patrimoine de l'Unesco, ou les kasbahs fortifiés. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour les mémorables circuits du désert du Sahara à Merzouga et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.");
+            frTranslation.setLocation("Marrakech à Fès");
+            frTranslation.setCategory("Circuits du désert du Sahara");
+            frTranslation.setDepartureLocation("Marrakech");
+            frTranslation.setReturnLocation("Fès");
+            frTranslation.setMeetingTime("15 minutes avant l'heure de départ à 8h");
+            frTranslation.setAvailability("Tous les jours");
+            frTranslation.setWhatToExpect("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nAu cours de ce circuit de 3 jours dans le désert du Sahara depuis Marrakech jusqu'à Fès, vous aurez l'occasion de découvrir les villes impériales de Marrakech et Fès ainsi que le désert du Sahara, c'est un mélange de culture, d'histoire et de site du patrimoine de l'Unesco. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour un voyage mémorable dans le désert du Sahara et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.");
+        } else {
+            frTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("fr")
+                    .title("Circuit de 3 jours dans le désert du Sahara depuis Marrakech jusqu'à Fès")
+                    .shortDescription("Une impression courte mais complète de cette région du Maroc avec ses montagnes, gorges, vallées, kasbahs et désert du Sahara. Sans oublier la splendeur du ciel nocturne, le coucher de soleil, le lever du soleil et l'hospitalité des gens.")
+                    .fullDescription("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nCe circuit de 3 jours dans le désert du Sahara depuis Marrakech jusqu'à Fès vous emmènera dans un circuit de Marrakech à Fès pour explorer les hautes montagnes de l'Atlas, la ville de marché du sud réputée site du patrimoine de l'Unesco, ou les kasbahs fortifiés. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour les mémorables circuits du désert du Sahara à Merzouga et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.")
+                    .location("Marrakech à Fès")
+                    .category("Circuits du désert du Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Fès")
+                    .meetingTime("15 minutes avant l'heure de départ à 8h")
+                    .availability("Tous les jours")
+                    .whatToExpect("Marrakech abrite certaines des structures les plus extraordinaires, notamment la Kasbah, un certain nombre de mosquées brillantes, un théâtre en plein air, des palais et des jardins qui attirent les touristes du monde entier. Des achats raisonnables dans les souks célèbres de la Médina à la visite historique des nombreux musées et monuments, cet endroit a tout pour plaire. La région du Haut Atlas de Marrakech offre un accès à la beauté pittoresque de la montagne.\n\nAu cours de ce circuit de 3 jours dans le désert du Sahara depuis Marrakech jusqu'à Fès, vous aurez l'occasion de découvrir les villes impériales de Marrakech et Fès ainsi que le désert du Sahara, c'est un mélange de culture, d'histoire et de site du patrimoine de l'Unesco. Imprégnez-vous de la beauté de votre environnement et engagez une conversation agréable avec des habitants multilingues pour un voyage mémorable dans le désert du Sahara et visitez les gorges de Dades et Todra, vivez une balade à dos de chameau et traversez les dunes de sable de Merzouga dans une piste de caravane pour regarder un magnifique coucher de soleil sur les grandes dunes, passez une nuit dans le camp de luxe du désert et profitez de moments avec les habitants.")
+                    .build();
+        }
+        translations.add(frTranslation);
+        
+        // Spanish translation
+        Optional<ActivityTranslation> existingEs = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "es");
+        ActivityTranslation esTranslation;
+        if (existingEs.isPresent()) {
+            esTranslation = existingEs.get();
+            esTranslation.setTitle("Viaje de 3 días al desierto del Sahara desde Marrakech hasta Fez");
+            esTranslation.setShortDescription("Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, valles, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, el amanecer y la hospitalidad de la gente.");
+            esTranslation.setFullDescription("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nEste viaje de 3 días al desierto del Sahara desde Marrakech hasta Fez te llevará en un tour de Marrakech a Fez para explorar las altas montañas del Atlas, la ciudad comercial del sur reconocida como sitio del Patrimonio de la Unesco, o las kasbahs fortificadas. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para los memorables tours del desierto del Sahara a Merzouga y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.");
+            esTranslation.setLocation("Marrakech a Fez");
+            esTranslation.setCategory("Tours del Desierto del Sahara");
+            esTranslation.setDepartureLocation("Marrakech");
+            esTranslation.setReturnLocation("Fez");
+            esTranslation.setMeetingTime("15 minutos antes de la hora de salida a las 8 am");
+            esTranslation.setAvailability("Todos los días");
+            esTranslation.setWhatToExpect("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nDurante este viaje de 3 días al desierto del Sahara desde Marrakech hasta Fez, tendrás la oportunidad de descubrir las ciudades imperiales de Marrakech y Fez así como el desierto del Sahara, es una mezcla de cultura, historia y sitio del Patrimonio de la Unesco. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para un viaje memorable al desierto del Sahara y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.");
+        } else {
+            esTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("es")
+                    .title("Viaje de 3 días al desierto del Sahara desde Marrakech hasta Fez")
+                    .shortDescription("Una impresión corta pero completa de esta área de Marruecos con sus montañas, gargantas, valles, Kasbahs y desierto del Sahara. Sin mencionar el esplendor del cielo nocturno, la puesta de sol, el amanecer y la hospitalidad de la gente.")
+                    .fullDescription("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nEste viaje de 3 días al desierto del Sahara desde Marrakech hasta Fez te llevará en un tour de Marrakech a Fez para explorar las altas montañas del Atlas, la ciudad comercial del sur reconocida como sitio del Patrimonio de la Unesco, o las kasbahs fortificadas. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para los memorables tours del desierto del Sahara a Merzouga y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.")
+                    .location("Marrakech a Fez")
+                    .category("Tours del Desierto del Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Fez")
+                    .meetingTime("15 minutos antes de la hora de salida a las 8 am")
+                    .availability("Todos los días")
+                    .whatToExpect("Marrakech alberga algunas de las estructuras más extraordinarias, incluidas la Kasbah, varias mezquitas brillantes, un teatro al aire libre, palacios y jardines que atraen a turistas de todo el mundo. Desde compras razonables en los famosos zocos de la Medina hasta visitas históricas a los numerosos museos y monumentos, este lugar lo tiene todo. La región del Alto Atlas de Marrakech proporciona acceso a la belleza pintoresca de la montaña.\n\nDurante este viaje de 3 días al desierto del Sahara desde Marrakech hasta Fez, tendrás la oportunidad de descubrir las ciudades imperiales de Marrakech y Fez así como el desierto del Sahara, es una mezcla de cultura, historia y sitio del Patrimonio de la Unesco. Absorbe la belleza de tu entorno y participa en una conversación agradable con lugareños multilingües para un viaje memorable al desierto del Sahara y visita las gargantas de Dades y Todra, experimenta un paseo en camello y atraviesa las dunas de arena de Merzouga en un sendero de caravana para ver una maravillosa puesta de sol sobre las grandes dunas, pasa una noche en el campamento de lujo del desierto y disfruta de momentos con los lugareños.")
+                    .build();
+        }
+        translations.add(esTranslation);
+        
+        // German translation
+        Optional<ActivityTranslation> existingDe = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "de");
+        ActivityTranslation deTranslation;
+        if (existingDe.isPresent()) {
+            deTranslation = existingDe.get();
+            deTranslation.setTitle("3-Tage-Wüstentour von Marrakesch nach Fes");
+            deTranslation.setShortDescription("Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, Tälern, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Sonnenaufgang und der Gastfreundschaft der Menschen.");
+            deTranslation.setFullDescription("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nDiese 3-Tage-Wüstentour von Marrakesch nach Fes führt Sie auf eine Tour von Marrakesch nach Fes, um die hohen Atlas-Berge, die südliche Marktstadt, die als UNESCO-Weltkulturerbe bekannt ist, oder die befestigten Kasbahs zu erkunden. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für die unvergesslichen Sahara-Wüstentouren nach Merzouga und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.");
+            deTranslation.setLocation("Marrakesch nach Fes");
+            deTranslation.setCategory("Sahara-Wüstentouren");
+            deTranslation.setDepartureLocation("Marrakesch");
+            deTranslation.setReturnLocation("Fes");
+            deTranslation.setMeetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr");
+            deTranslation.setAvailability("Täglich");
+            deTranslation.setWhatToExpect("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nWährend dieser 3-Tage-Wüstentour von Marrakesch nach Fes haben Sie die Gelegenheit, die kaiserlichen Städte von Marrakesch und Fes sowie die Sahara-Wüste zu entdecken, es ist eine Mischung aus Kultur, Geschichte und UNESCO-Weltkulturerbe. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für eine unvergessliche Reise in die Sahara-Wüste und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.");
+        } else {
+            deTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("de")
+                    .title("3-Tage-Wüstentour von Marrakesch nach Fes")
+                    .shortDescription("Ein kurzer aber vollständiger Eindruck von diesem Gebiet Marokkos mit seinen Bergen, Schluchten, Tälern, Kasbahs und der Sahara-Wüste. Ganz zu schweigen von der Pracht des Nachthimmels, dem Sonnenuntergang, dem Sonnenaufgang und der Gastfreundschaft der Menschen.")
+                    .fullDescription("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nDiese 3-Tage-Wüstentour von Marrakesch nach Fes führt Sie auf eine Tour von Marrakesch nach Fes, um die hohen Atlas-Berge, die südliche Marktstadt, die als UNESCO-Weltkulturerbe bekannt ist, oder die befestigten Kasbahs zu erkunden. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für die unvergesslichen Sahara-Wüstentouren nach Merzouga und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.")
+                    .location("Marrakesch nach Fes")
+                    .category("Sahara-Wüstentouren")
+                    .departureLocation("Marrakesch")
+                    .returnLocation("Fes")
+                    .meetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr")
+                    .availability("Täglich")
+                    .whatToExpect("Marrakesch beherbergt einige der außergewöhnlichsten Strukturen, darunter die Kasbah, eine Reihe brillanter Moscheen, ein Freilufttheater, Paläste und Gärten, die Touristen aus aller Welt anziehen. Von vernünftigem Einkaufen in berühmten Medina-Souks bis hin zu historischen Sehenswürdigkeiten der vielen Museen und Denkmäler - dieser Ort hat alles zu bieten. Die Region Hoher Atlas von Marrakesch bietet Zugang zur malerischen Bergschönheit.\n\nWährend dieser 3-Tage-Wüstentour von Marrakesch nach Fes haben Sie die Gelegenheit, die kaiserlichen Städte von Marrakesch und Fes sowie die Sahara-Wüste zu entdecken, es ist eine Mischung aus Kultur, Geschichte und UNESCO-Weltkulturerbe. Saugen Sie die Lieblichkeit Ihrer Umgebung auf und führen Sie ein angenehmes Gespräch mit mehrsprachigen Einheimischen für eine unvergessliche Reise in die Sahara-Wüste und besuchen Sie die Schluchten von Dades und Todra, erleben Sie eine Kamelritt und gehen Sie durch die Sanddünen von Merzouga auf einer Karawanenspur, um einen wunderbaren Sonnenuntergang über den großen Dünen zu beobachten, verbringen Sie eine Nacht im Luxus-Wüstencamp und genießen Sie Momente mit Einheimischen.")
+                    .build();
+        }
+        translations.add(deTranslation);
+        
+        // Save all translations
+        activityTranslationRepository.saveAll(translations);
+    }
+
+    private void seed3DaySaharaDesertTourFromMarrakechIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+        
+        if (saharaDesert == null) {
+            return;
+        }
+        
+        // Always call seed3DaySaharaDesertTourFromMarrakech to ensure activity and translations are up to date
+        seed3DaySaharaDesertTourFromMarrakech(saharaDesert);
+    }
+    
+    private void seed3DaySaharaDesertTourFromMarrakech(Destination saharaDesert) {
+        String slug = SlugUtil.generateSlug("3 Day Sahara Desert Tour from Marrakech");
+        Optional<Activity> existingActivity = activityRepository.findBySlug(slug);
+        Activity activity;
+        boolean isNew = false;
+        
+        if (existingActivity.isPresent()) {
+            // Activity already exists - preserve all user modifications
+            activity = existingActivity.get();
+            // Only update critical fields when opt-in flags are true (default: preserve admin destination/active)
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !activity.getDestination().getName().equals("Sahara Desert"))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            // Only ensure translations exist, but don't update the activity itself
+            seed3DaySaharaDesertTourFromMarrakechTranslations(activity);
+            return;
+        }
+        
+        // Create new activity
+        isNew = true;
+        activity = Activity.builder()
+                    .title("3 Day Sahara Desert Tour from Marrakech")
+                    .slug(slug)
+                    .shortDescription("Experience the magic of the Sahara Desert on this 3-day tour from Marrakech. Journey through the High Atlas Mountains, visit ancient kasbahs, ride camels through golden dunes, and spend a night under the stars in a luxury desert camp.")
+                    .fullDescription("Embark on an unforgettable 3-day journey from Marrakech to the Sahara Desert. This tour takes you through the stunning High Atlas Mountains, where you'll witness breathtaking landscapes and traditional Berber villages. Visit the UNESCO World Heritage site of Ait Ben Haddou, explore the dramatic Todra and Dades Gorges, and experience the magic of the Sahara Desert at Merzouga.\n\nYour adventure includes a camel trek through the golden dunes of Erg Chebbi, where you'll watch a spectacular sunset and spend a night in a luxury desert camp. Enjoy traditional Berber music around a campfire under the starry desert sky. This tour offers a perfect blend of culture, history, and natural beauty, providing an authentic Moroccan experience that you'll treasure forever.")
+                    .price(new BigDecimal("99.00"))
+                    .duration("3 Days")
+                    .location("Marrakech to Sahara Desert")
+                    .category("Sahara Desert Tours")
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.8"))
+                    .reviewCount(1245)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(16)
+                    .availableSlots(32)
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200"
+                    )))
+                    .availability("Everyday")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 Minutes Before Departure time 8 am")
+                    .whatToExpect("This 3-day Sahara Desert tour from Marrakech offers an incredible journey through Morocco's diverse landscapes. You'll cross the High Atlas Mountains via the Tizi n'Tichka pass, visit ancient kasbahs and fortified villages, explore dramatic gorges, and experience the magic of the Sahara Desert. The highlight is a camel trek through the golden dunes of Erg Chebbi, where you'll watch a breathtaking sunset and spend a night in a luxury desert camp under the stars. Enjoy traditional Berber hospitality, music, and cuisine throughout your journey.")
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Professional Driver/ Guide",
+                            "Overnight in Desert camp and Camel Ride",
+                            "Transport by an air-conditioned vehicle",
+                            "Hotel Pick-up and Drop-off",
+                            "Transportation insurance",
+                            "Breakfast and dinner",
+                            "Accommodation for 2 nights"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and Drinks",
+                            "Tips and Gratuities",
+                            "Any Private Expenses",
+                            "Travel insurance"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes for walking tour",
+                            "Sunscreen",
+                            "Your Camera",
+                            "Warm clothing for desert night"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Day 1: Marrakech - Ait Ben Haddou - Ouarzazate - Dades Gorges. Your driver/guide will pick you up at your Marrakech accommodation at 8 am and drive through the High Atlas Mountains via the Tizi n'Tichka pass (2,260m altitude), offering spectacular views. You'll visit the famous Kasbah Ait Ben Haddou, a UNESCO World Heritage Site and filming location for many movies. After lunch, continue to Ouarzazate, known as the 'Gate of the Desert', where you'll visit the Kasbah Taourirt and cinema studios. Then journey to the Dades Gorges, passing through the Roses Valley. Dinner and overnight at a hotel in Dades Gorges.",
+                            "Day 2: Dades Gorges - Todra Gorges - Merzouga Desert. After breakfast, visit the Dades Gorges and then head to Todra Gorges, a favorite spot for rock climbers with 300m high canyons. After exploring the gorges and palm oasis, continue through ancient caravan routes to Erfoud, known for its fossil-rich black marble. Arrive at Merzouga, where you'll be welcomed with mint tea. Then embark on a camel trek through the golden dunes of Erg Chebbi to watch a spectacular sunset. Arrive at your luxury desert camp for dinner, traditional Berber music around a campfire, and a night under the stars.",
+                            "Day 3: Merzouga - High Atlas Mountains - Marrakech. Wake up early to watch the sunrise over the dunes. After breakfast, return to Merzouga by camel or 4WD. Begin the journey back to Marrakech, crossing the High Atlas Mountains again. Enjoy scenic views and photo stops along the way. Arrive in Marrakech in the late afternoon, where you'll be dropped off at your accommodation."
+                    )))
+                    .availableDates(new ArrayList<>(Arrays.asList(
+                            LocalDate.now().plusDays(1),
+                            LocalDate.now().plusDays(2),
+                            LocalDate.now().plusDays(3),
+                            LocalDate.now().plusDays(4),
+                            LocalDate.now().plusDays(5),
+                            LocalDate.now().plusDays(6),
+                            LocalDate.now().plusDays(7),
+                            LocalDate.now().plusDays(8),
+                            LocalDate.now().plusDays(9),
+                            LocalDate.now().plusDays(10)
+                    )))
+                    .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
+                    .destination(saharaDesert)
+                    .tourType(Activity.TourType.SHARED)
+                    .build();
+        
+        activityRepository.save(activity);
+        
+        // Create or update translations for the 3-day Sahara Desert tour from Marrakech
+        seed3DaySaharaDesertTourFromMarrakechTranslations(activity);
+    }
+
+    private void seed3DaySaharaDesertTourFromMarrakechTranslations(Activity activity) {
+        // Check if translations already exist and update them, otherwise create new ones
+        List<ActivityTranslation> translations = new ArrayList<>();
+        
+        // French translation
+        Optional<ActivityTranslation> existingFr = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "fr");
+        ActivityTranslation frTranslation;
+        if (existingFr.isPresent()) {
+            frTranslation = existingFr.get();
+            frTranslation.setTitle("Circuit de 3 jours dans le désert du Sahara depuis Marrakech");
+            frTranslation.setShortDescription("Découvrez la magie du désert du Sahara lors de ce circuit de 3 jours depuis Marrakech. Traversez les montagnes du Haut Atlas, visitez d'anciennes kasbahs, faites une balade à dos de chameau à travers les dunes dorées et passez une nuit sous les étoiles dans un camp de luxe du désert.");
+            frTranslation.setFullDescription("Partez pour un voyage inoubliable de 3 jours depuis Marrakech vers le désert du Sahara. Ce circuit vous emmène à travers les magnifiques montagnes du Haut Atlas, où vous découvrirez des paysages à couper le souffle et des villages berbères traditionnels. Visitez le site du patrimoine mondial de l'UNESCO d'Ait Ben Haddou, explorez les gorges dramatiques de Todra et Dades, et découvrez la magie du désert du Sahara à Merzouga.\n\nVotre aventure comprend une randonnée à dos de chameau à travers les dunes dorées d'Erg Chebbi, où vous assisterez à un coucher de soleil spectaculaire et passerez une nuit dans un camp de luxe du désert. Profitez de la musique berbère traditionnelle autour d'un feu de camp sous le ciel étoilé du désert. Ce circuit offre un mélange parfait de culture, d'histoire et de beauté naturelle, offrant une expérience marocaine authentique que vous chérirez pour toujours.");
+            frTranslation.setLocation("Marrakech vers le désert du Sahara");
+            frTranslation.setCategory("Circuits du désert du Sahara");
+            frTranslation.setDepartureLocation("Marrakech");
+            frTranslation.setReturnLocation("Marrakech");
+            frTranslation.setMeetingTime("15 minutes avant l'heure de départ à 8h");
+            frTranslation.setAvailability("Tous les jours");
+            frTranslation.setWhatToExpect("Ce circuit de 3 jours dans le désert du Sahara depuis Marrakech offre un voyage incroyable à travers les paysages diversifiés du Maroc. Vous traverserez les montagnes du Haut Atlas via le col de Tizi n'Tichka, visiterez d'anciennes kasbahs et villages fortifiés, explorerez des gorges dramatiques et découvrirez la magie du désert du Sahara. Le point culminant est une randonnée à dos de chameau à travers les dunes dorées d'Erg Chebbi, où vous assisterez à un coucher de soleil à couper le souffle et passerez une nuit dans un camp de luxe du désert sous les étoiles. Profitez de l'hospitalité berbère traditionnelle, de la musique et de la cuisine tout au long de votre voyage.");
+        } else {
+            frTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("fr")
+                    .title("Circuit de 3 jours dans le désert du Sahara depuis Marrakech")
+                    .shortDescription("Découvrez la magie du désert du Sahara lors de ce circuit de 3 jours depuis Marrakech. Traversez les montagnes du Haut Atlas, visitez d'anciennes kasbahs, faites une balade à dos de chameau à travers les dunes dorées et passez une nuit sous les étoiles dans un camp de luxe du désert.")
+                    .fullDescription("Partez pour un voyage inoubliable de 3 jours depuis Marrakech vers le désert du Sahara. Ce circuit vous emmène à travers les magnifiques montagnes du Haut Atlas, où vous découvrirez des paysages à couper le souffle et des villages berbères traditionnels. Visitez le site du patrimoine mondial de l'UNESCO d'Ait Ben Haddou, explorez les gorges dramatiques de Todra et Dades, et découvrez la magie du désert du Sahara à Merzouga.\n\nVotre aventure comprend une randonnée à dos de chameau à travers les dunes dorées d'Erg Chebbi, où vous assisterez à un coucher de soleil spectaculaire et passerez une nuit dans un camp de luxe du désert. Profitez de la musique berbère traditionnelle autour d'un feu de camp sous le ciel étoilé du désert. Ce circuit offre un mélange parfait de culture, d'histoire et de beauté naturelle, offrant une expérience marocaine authentique que vous chérirez pour toujours.")
+                    .location("Marrakech vers le désert du Sahara")
+                    .category("Circuits du désert du Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutes avant l'heure de départ à 8h")
+                    .availability("Tous les jours")
+                    .whatToExpect("Ce circuit de 3 jours dans le désert du Sahara depuis Marrakech offre un voyage incroyable à travers les paysages diversifiés du Maroc. Vous traverserez les montagnes du Haut Atlas via le col de Tizi n'Tichka, visiterez d'anciennes kasbahs et villages fortifiés, explorerez des gorges dramatiques et découvrirez la magie du désert du Sahara. Le point culminant est une randonnée à dos de chameau à travers les dunes dorées d'Erg Chebbi, où vous assisterez à un coucher de soleil à couper le souffle et passerez une nuit dans un camp de luxe du désert sous les étoiles. Profitez de l'hospitalité berbère traditionnelle, de la musique et de la cuisine tout au long de votre voyage.")
+                    .build();
+        }
+        translations.add(frTranslation);
+        
+        // Spanish translation
+        Optional<ActivityTranslation> existingEs = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "es");
+        ActivityTranslation esTranslation;
+        if (existingEs.isPresent()) {
+            esTranslation = existingEs.get();
+            esTranslation.setTitle("Tour de 3 días al desierto del Sahara desde Marrakech");
+            esTranslation.setShortDescription("Experimenta la magia del desierto del Sahara en este tour de 3 días desde Marrakech. Viaja a través de las montañas del Alto Atlas, visita antiguas kasbahs, monta camellos a través de dunas doradas y pasa una noche bajo las estrellas en un campamento de lujo en el desierto.");
+            esTranslation.setFullDescription("Embárcate en un viaje inolvidable de 3 días desde Marrakech al desierto del Sahara. Este tour te lleva a través de las impresionantes montañas del Alto Atlas, donde serás testigo de paisajes impresionantes y pueblos bereberes tradicionales. Visita el sitio del Patrimonio Mundial de la UNESCO de Ait Ben Haddou, explora los dramáticos desfiladeros de Todra y Dades, y experimenta la magia del desierto del Sahara en Merzouga.\n\nTu aventura incluye un paseo en camello a través de las dunas doradas de Erg Chebbi, donde verás una puesta de sol espectacular y pasarás una noche en un campamento de lujo en el desierto. Disfruta de música bereber tradicional alrededor de una fogata bajo el cielo estrellado del desierto. Este tour ofrece una mezcla perfecta de cultura, historia y belleza natural, proporcionando una experiencia marroquí auténtica que atesorarás para siempre.");
+            esTranslation.setLocation("Marrakech al desierto del Sahara");
+            esTranslation.setCategory("Tours del Desierto del Sahara");
+            esTranslation.setDepartureLocation("Marrakech");
+            esTranslation.setReturnLocation("Marrakech");
+            esTranslation.setMeetingTime("15 minutos antes de la hora de salida a las 8 am");
+            esTranslation.setAvailability("Todos los días");
+            esTranslation.setWhatToExpect("Este tour de 3 días al desierto del Sahara desde Marrakech ofrece un viaje increíble a través de los diversos paisajes de Marruecos. Cruzarás las montañas del Alto Atlas a través del paso Tizi n'Tichka, visitarás antiguas kasbahs y pueblos fortificados, explorarás desfiladeros dramáticos y experimentarás la magia del desierto del Sahara. El punto culminante es un paseo en camello a través de las dunas doradas de Erg Chebbi, donde verás una puesta de sol impresionante y pasarás una noche en un campamento de lujo en el desierto bajo las estrellas. Disfruta de la hospitalidad bereber tradicional, música y cocina durante todo tu viaje.");
+        } else {
+            esTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("es")
+                    .title("Tour de 3 días al desierto del Sahara desde Marrakech")
+                    .shortDescription("Experimenta la magia del desierto del Sahara en este tour de 3 días desde Marrakech. Viaja a través de las montañas del Alto Atlas, visita antiguas kasbahs, monta camellos a través de dunas doradas y pasa una noche bajo las estrellas en un campamento de lujo en el desierto.")
+                    .fullDescription("Embárcate en un viaje inolvidable de 3 días desde Marrakech al desierto del Sahara. Este tour te lleva a través de las impresionantes montañas del Alto Atlas, donde serás testigo de paisajes impresionantes y pueblos bereberes tradicionales. Visita el sitio del Patrimonio Mundial de la UNESCO de Ait Ben Haddou, explora los dramáticos desfiladeros de Todra y Dades, y experimenta la magia del desierto del Sahara en Merzouga.\n\nTu aventura incluye un paseo en camello a través de las dunas doradas de Erg Chebbi, donde verás una puesta de sol espectacular y pasarás una noche en un campamento de lujo en el desierto. Disfruta de música bereber tradicional alrededor de una fogata bajo el cielo estrellado del desierto. Este tour ofrece una mezcla perfecta de cultura, historia y belleza natural, proporcionando una experiencia marroquí auténtica que atesorarás para siempre.")
+                    .location("Marrakech al desierto del Sahara")
+                    .category("Tours del Desierto del Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutos antes de la hora de salida a las 8 am")
+                    .availability("Todos los días")
+                    .whatToExpect("Este tour de 3 días al desierto del Sahara desde Marrakech ofrece un viaje increíble a través de los diversos paisajes de Marruecos. Cruzarás las montañas del Alto Atlas a través del paso Tizi n'Tichka, visitarás antiguas kasbahs y pueblos fortificados, explorarás desfiladeros dramáticos y experimentarás la magia del desierto del Sahara. El punto culminante es un paseo en camello a través de las dunas doradas de Erg Chebbi, donde verás una puesta de sol impresionante y pasarás una noche en un campamento de lujo en el desierto bajo las estrellas. Disfruta de la hospitalidad bereber tradicional, música y cocina durante todo tu viaje.")
+                    .build();
+        }
+        translations.add(esTranslation);
+        
+        // German translation
+        Optional<ActivityTranslation> existingDe = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "de");
+        ActivityTranslation deTranslation;
+        if (existingDe.isPresent()) {
+            deTranslation = existingDe.get();
+            deTranslation.setTitle("3-Tage-Wüstentour ab Marrakesch");
+            deTranslation.setShortDescription("Erleben Sie die Magie der Sahara-Wüste auf dieser 3-Tage-Tour ab Marrakesch. Reisen Sie durch den Hohen Atlas, besuchen Sie alte Kasbahs, reiten Sie auf Kamelen durch goldene Dünen und verbringen Sie eine Nacht unter den Sternen in einem Luxus-Wüstencamp.");
+            deTranslation.setFullDescription("Begeben Sie sich auf eine unvergessliche 3-Tage-Reise von Marrakesch in die Sahara-Wüste. Diese Tour führt Sie durch die atemberaubenden Berge des Hohen Atlas, wo Sie atemberaubende Landschaften und traditionelle Berberdörfer erleben werden. Besuchen Sie die UNESCO-Welterbestätte Ait Ben Haddou, erkunden Sie die dramatischen Schluchten von Todra und Dades und erleben Sie die Magie der Sahara-Wüste in Merzouga.\n\nIhr Abenteuer beinhaltet eine Kamelritt durch die goldenen Dünen von Erg Chebbi, wo Sie einen spektakulären Sonnenuntergang beobachten und eine Nacht in einem Luxus-Wüstencamp verbringen. Genießen Sie traditionelle Berbermusik um ein Lagerfeuer unter dem sternenklaren Wüstenhimmel. Diese Tour bietet eine perfekte Mischung aus Kultur, Geschichte und natürlicher Schönheit und bietet ein authentisches marokkanisches Erlebnis, das Sie für immer schätzen werden.");
+            deTranslation.setLocation("Marrakesch zur Sahara-Wüste");
+            deTranslation.setCategory("Sahara-Wüstentouren");
+            deTranslation.setDepartureLocation("Marrakesch");
+            deTranslation.setReturnLocation("Marrakesch");
+            deTranslation.setMeetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr");
+            deTranslation.setAvailability("Täglich");
+            deTranslation.setWhatToExpect("Diese 3-Tage-Wüstentour ab Marrakesch bietet eine unglaubliche Reise durch Marokkos vielfältige Landschaften. Sie werden den Hohen Atlas über den Tizi n'Tichka-Pass überqueren, alte Kasbahs und befestigte Dörfer besuchen, dramatische Schluchten erkunden und die Magie der Sahara-Wüste erleben. Der Höhepunkt ist eine Kamelritt durch die goldenen Dünen von Erg Chebbi, wo Sie einen atemberaubenden Sonnenuntergang beobachten und eine Nacht in einem Luxus-Wüstencamp unter den Sternen verbringen. Genießen Sie traditionelle Berbergastfreundschaft, Musik und Küche während Ihrer gesamten Reise.");
+        } else {
+            deTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("de")
+                    .title("3-Tage-Wüstentour ab Marrakesch")
+                    .shortDescription("Erleben Sie die Magie der Sahara-Wüste auf dieser 3-Tage-Tour ab Marrakesch. Reisen Sie durch den Hohen Atlas, besuchen Sie alte Kasbahs, reiten Sie auf Kamelen durch goldene Dünen und verbringen Sie eine Nacht unter den Sternen in einem Luxus-Wüstencamp.")
+                    .fullDescription("Begeben Sie sich auf eine unvergessliche 3-Tage-Reise von Marrakesch in die Sahara-Wüste. Diese Tour führt Sie durch die atemberaubenden Berge des Hohen Atlas, wo Sie atemberaubende Landschaften und traditionelle Berberdörfer erleben werden. Besuchen Sie die UNESCO-Welterbestätte Ait Ben Haddou, erkunden Sie die dramatischen Schluchten von Todra und Dades und erleben Sie die Magie der Sahara-Wüste in Merzouga.\n\nIhr Abenteuer beinhaltet eine Kamelritt durch die goldenen Dünen von Erg Chebbi, wo Sie einen spektakulären Sonnenuntergang beobachten und eine Nacht in einem Luxus-Wüstencamp verbringen. Genießen Sie traditionelle Berbermusik um ein Lagerfeuer unter dem sternenklaren Wüstenhimmel. Diese Tour bietet eine perfekte Mischung aus Kultur, Geschichte und natürlicher Schönheit und bietet ein authentisches marokkanisches Erlebnis, das Sie für immer schätzen werden.")
+                    .location("Marrakesch zur Sahara-Wüste")
+                    .category("Sahara-Wüstentouren")
+                    .departureLocation("Marrakesch")
+                    .returnLocation("Marrakesch")
+                    .meetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr")
+                    .availability("Täglich")
+                    .whatToExpect("Diese 3-Tage-Wüstentour ab Marrakesch bietet eine unglaubliche Reise durch Marokkos vielfältige Landschaften. Sie werden den Hohen Atlas über den Tizi n'Tichka-Pass überqueren, alte Kasbahs und befestigte Dörfer besuchen, dramatische Schluchten erkunden und die Magie der Sahara-Wüste erleben. Der Höhepunkt ist eine Kamelritt durch die goldenen Dünen von Erg Chebbi, wo Sie einen atemberaubenden Sonnenuntergang beobachten und eine Nacht in einem Luxus-Wüstencamp unter den Sternen verbringen. Genießen Sie traditionelle Berbergastfreundschaft, Musik und Küche während Ihrer gesamten Reise.")
+                    .build();
+        }
+        translations.add(deTranslation);
+        
+        // Save all translations
+        activityTranslationRepository.saveAll(translations);
+    }
+
     private void seedBookings() {
         List<User> users = userRepository.findByRole(User.Role.ROLE_CLIENT, org.springframework.data.domain.Pageable.unpaged()).getContent();
         List<Activity> activities = activityRepository.findAll();
@@ -1417,32 +2095,22 @@ public class DataSeeder implements CommandLineRunner {
                 Booking.builder()
                         .bookingReference(BookingReferenceUtil.generateBookingReference())
                         .user(users.get(1))
-                        .activity(activities.get(2))
+                        .activity(activities.get(0))
                         .bookingDate(LocalDate.now().minusDays(3))
                         .travelDate(LocalDate.now().plusDays(1))
                         .numberOfPeople(1)
-                        .totalPrice(activities.get(2).getPrice())
+                        .totalPrice(activities.get(0).getPrice())
                         .status(Booking.BookingStatus.PENDING)
                         .build(),
                 Booking.builder()
                         .bookingReference(BookingReferenceUtil.generateBookingReference())
                         .user(users.get(2))
-                        .activity(activities.get(4))
+                        .activity(activities.get(0))
                         .bookingDate(LocalDate.now().minusDays(10))
                         .travelDate(LocalDate.now().plusDays(7))
                         .numberOfPeople(4)
-                        .totalPrice(activities.get(4).getPrice().multiply(new BigDecimal("4")))
+                        .totalPrice(activities.get(0).getPrice().multiply(new BigDecimal("4")))
                         .status(Booking.BookingStatus.CONFIRMED)
-                        .build(),
-                Booking.builder()
-                        .bookingReference(BookingReferenceUtil.generateBookingReference())
-                        .user(users.get(0))
-                        .activity(activities.get(1))
-                        .bookingDate(LocalDate.now().minusDays(7))
-                        .travelDate(LocalDate.now().plusDays(3))
-                        .numberOfPeople(2)
-                        .totalPrice(activities.get(1).getPrice().multiply(new BigDecimal("2")))
-                        .status(Booking.BookingStatus.COMPLETED)
                         .build()
         ));
         bookingRepository.saveAll(bookings);
@@ -1462,50 +2130,22 @@ public class DataSeeder implements CommandLineRunner {
                         .user(users.get(0))
                         .activity(activities.get(0))
                         .rating(5)
-                        .comment("Amazing experience! The camel trek at sunset was magical and the desert camp was comfortable. Highly recommend!")
+                        .comment("Amazing experience! The city tour was fantastic and our guide was very knowledgeable. Highly recommend!")
                         .approved(true)
                         .build(),
                 Review.builder()
                         .user(users.get(1))
                         .activity(activities.get(0))
                         .rating(5)
-                        .comment("Best desert experience ever! The staff was friendly and the food was delicious.")
+                        .comment("Best city tour ever! The driver was friendly and showed us all the highlights of Marrakech.")
                         .approved(true)
                         .build(),
                 Review.builder()
                         .user(users.get(2))
-                        .activity(activities.get(2))
+                        .activity(activities.get(0))
                         .rating(4)
                         .comment("Great city tour! Our guide was knowledgeable and showed us all the highlights of Marrakech.")
                         .approved(true)
-                        .build(),
-                Review.builder()
-                        .user(users.get(0))
-                        .activity(activities.get(1))
-                        .rating(5)
-                        .comment("Thrilling quad biking adventure! The dunes were challenging and the views were spectacular.")
-                        .approved(true)
-                        .build(),
-                Review.builder()
-                        .user(users.get(3))
-                        .activity(activities.get(4))
-                        .rating(4)
-                        .comment("Tough but rewarding trek. The summit views were absolutely worth the effort!")
-                        .approved(true)
-                        .build(),
-                Review.builder()
-                        .user(users.get(1))
-                        .activity(activities.get(6))
-                        .rating(5)
-                        .comment("Chefchaouen is beautiful! The blue streets are even more stunning in person.")
-                        .approved(true)
-                        .build(),
-                Review.builder()
-                        .user(users.get(2))
-                        .activity(activities.get(3))
-                        .rating(5)
-                        .comment("Fantastic cooking class! Learned so much about Moroccan cuisine and the food was delicious.")
-                        .approved(false)
                         .build()
         ));
         reviewRepository.saveAll(reviews);
@@ -1536,26 +2176,333 @@ public class DataSeeder implements CommandLineRunner {
         List<Favorite> favorites = new ArrayList<>(Arrays.asList(
                 Favorite.builder()
                         .user(users.get(0))
-                        .activity(activities.get(4))
-                        .build(),
-                Favorite.builder()
-                        .user(users.get(0))
-                        .activity(activities.get(6))
+                        .activity(activities.get(0))
                         .build(),
                 Favorite.builder()
                         .user(users.get(1))
                         .activity(activities.get(0))
                         .build(),
                 Favorite.builder()
-                        .user(users.get(1))
-                        .activity(activities.get(2))
-                        .build(),
-                Favorite.builder()
                         .user(users.get(2))
-                        .activity(activities.get(1))
+                        .activity(activities.get(0))
                         .build()
         ));
         favoriteRepository.saveAll(favorites);
+    }
+    
+    private void seed2DayDesertTourFromMarrakechIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream().filter(d -> d.getName().equals("Sahara Desert")).findFirst().orElse(null);
+        
+        if (saharaDesert == null) {
+            return;
+        }
+        
+        // Always call seed2DayDesertTourFromMarrakech to ensure activity and translations are up to date
+        seed2DayDesertTourFromMarrakech(saharaDesert);
+    }
+    
+    private void seed2DayDesertTourFromMarrakech(Destination saharaDesert) {
+        String slug = SlugUtil.generateSlug("2 Day Desert Tour from Marrakech");
+        Optional<Activity> existingActivity = activityRepository.findBySlug(slug);
+        Activity activity;
+        boolean isNew = false;
+        
+        if (existingActivity.isPresent()) {
+            // Activity already exists - preserve all user modifications
+            activity = existingActivity.get();
+            // Only update critical fields when opt-in flags are true (default: preserve admin destination/active)
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !activity.getDestination().getName().equals("Sahara Desert"))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            // Only ensure translations exist, but don't update the activity itself
+            seed2DayDesertTourFromMarrakechTranslations(activity);
+            return;
+        } else {
+            isNew = true;
+            activity = Activity.builder()
+                    .title("2 Day Desert Tour from Marrakech")
+                    .slug(slug)
+                    .shortDescription("Discover the Sahara desert of Zagora and the world heritage kasbahs during this 2 Day Desert Tour from Marrakech. This tour to the Sahara desert will take you beyond to explore the green palm grove, the high atlas mountain views, and the world heritage sites.")
+                    .fullDescription("2-Day Desert Tour from Marrakech to Zagora Morocco offers fun, exhilarating activities for tourists and therefore we plan our activities so that tourists can experience the whole Moroccan culture while in Marrakech. The 2-Day desert tour from Marrakech to Zagora is a great example of this policy. This two-day one-night desert excursion is a group event with shared costs that brings together about 14 tourists for a fun deserts experience. This means couples or a group of travelers pay significantly less than they would if they opted to have a private Marrakech Zagora tour.\n\nA private driver and a new air-conditioned vehicle will be at your disposal to visit the main desert and Sahara highlights from Marrakech. Our Sahara Desert Tours start from Marrakech or Fes and cover all the tourist attractions including Ait Ben Haddou kasbah, the Draa valley, the palm grove of Zagora, and the camel ride experience with a stay at the desert camp in Zagora dunes.\n\nTravel in this Sahara Desert Tours through the dramatic road if Tichka pass and the wonderful views of the high atlas mountains and the old road of caravans to reach the preserved site of Ait Ben Haddou. On the road that leads there, you will discover some of the most beautiful landscapes of Morocco.")
+                    .price(new BigDecimal("99.00"))
+                    .duration("2 Days")
+                    .location("Marrakech to Zagora")
+                    .category("Sahara Desert Tours")
+                    .difficultyLevel(Activity.DifficultyLevel.MODERATE)
+                    .ratingAverage(new BigDecimal("4.7"))
+                    .reviewCount(1387)
+                    .featured(true)
+                    .active(true)
+                    .maxGroupSize(14)
+                    .availableSlots(28)
+                    .imageUrl("https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200")
+                    .galleryImages(new ArrayList<>(Arrays.asList(
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200",
+                            "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                            "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                            "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=1200"
+                    )))
+                    .availability("Everyday")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 Minutes Before Departure time 8 am")
+                    .whatToExpect("Discover the Sahara desert of Zagora and the world heritage kasbahs during this 2 Day Desert Tour from Marrakech. This tour to the Sahara desert will take you beyond to explore the green palm grove, the high atlas mountain views, and the world heritage sites.\n\nA private driver and a new air-conditioned vehicle will be at your disposal to visit the main desert and Sahara highlights from Marrakech. This tour will start from Marrakech and cover all the attractions including Ait Ben Haddou kasbah, the Draa valley, the palm grove of Zagora, and the camel ride experience with a stay at the desert camp in Zagora dunes.")
+                    .includedItems(new ArrayList<>(Arrays.asList(
+                            "Professional Driver/ Guide",
+                            "Overnight in Desert camp and Camel Ride",
+                            "Transport by an air-conditioned vehicle",
+                            "Hotel Pick-up and Drop-off",
+                            "Transportation insurance"
+                    )))
+                    .excludedItems(new ArrayList<>(Arrays.asList(
+                            "Lunch and Drinks",
+                            "Tips and Gratuities",
+                            "Any Private Expenses",
+                            "Travel Insurance"
+                    )))
+                    .complementaries(new ArrayList<>(Arrays.asList(
+                            "Comfortable shoes for walking tour",
+                            "Sunscreen",
+                            "Your Camera"
+                    )))
+                    .itinerary(new ArrayList<>(Arrays.asList(
+                            "Day 1: Marrakech - Ait Ben Haddou Kasbah - Ouarazate - Zagora\n\nWe will pick you up directly from your hotel in Marrakech and drive through the route passes through valleys and deserts allowing you to enjoy spectacular views from the Atlas Mountains. We will go through the Tizi n'Tichka, a pass at an altitude of 2,260 meters: the highest pass in North Africa and it has become famous for the breathtaking view it offers. Halfway, you will benefit from a free visit to the famous Kasbah Ait Ben Haddou, a fortified city classified as a UNESCO World Heritage Site. Lunch in a local restaurant overlooking the kasbah, and then we will continue our journey towards Draa valley, next stop will be in Draa valley for some beautiful pictures. Continue to reach the palm grove of Zagora and after a welcome tea, you will start a new adventure in a camel caravan trek to the desert camp where you will spend an unforgettable night under Berber tents. Dinner will be served in the camp and enjoy moments with Berber music show that will animate your evening.",
+                            "Day 2: Zagora - Agdz - Kasbah Taourirte - Marrakech\n\nEarly wake up to enjoy a beautiful sunrise over the green palm grove of Draa valley, then, ride camels back to the hotel where you will meet your driver/guide to start a new day back to Marrakech. Today, you will explore the Draa valley and our first stop will be in the KAsbah Tamnougalte in the village of Agdz, after the visit to the kasbah we will head to Ouarzazate where we will stop again to visit the cinema museum and the old house of the Pasha El Glaoui, the kasbah Taourirte is a world heritage kasbah by UNESCO. After lunch in Ouarzazat, we will drive back to Marrakech through the High Atlas Mountains and the Tichka pass. Arrive in Marrakech around 6 PM drop off at your hotel and end of our 2 Days Sahara desert tour."
+                    )))
+                    .availableDates(new ArrayList<>(Arrays.asList(
+                            LocalDate.now().plusDays(1),
+                            LocalDate.now().plusDays(2),
+                            LocalDate.now().plusDays(3),
+                            LocalDate.now().plusDays(4),
+                            LocalDate.now().plusDays(5),
+                            LocalDate.now().plusDays(6),
+                            LocalDate.now().plusDays(7),
+                            LocalDate.now().plusDays(8),
+                            LocalDate.now().plusDays(9),
+                            LocalDate.now().plusDays(10)
+                    )))
+                    .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
+                    .destination(saharaDesert)
+                    .tourType(Activity.TourType.SHARED)
+                    .build();
+        }
+        
+        activityRepository.save(activity);
+        
+        // Create or update translations for the 2-day desert tour from Marrakech
+        seed2DayDesertTourFromMarrakechTranslations(activity);
+    }
+    
+    private void seed2DayDesertTourFromMarrakechTranslations(Activity activity) {
+        // Check if translations already exist and update them, otherwise create new ones
+        List<ActivityTranslation> translations = new ArrayList<>();
+        
+        // French translation
+        Optional<ActivityTranslation> existingFr = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "fr");
+        ActivityTranslation frTranslation;
+        if (existingFr.isPresent()) {
+            frTranslation = existingFr.get();
+            frTranslation.setTitle("Circuit de 2 jours dans le désert depuis Marrakech");
+            frTranslation.setShortDescription("Découvrez le désert du Sahara de Zagora et les kasbahs du patrimoine mondial lors de ce circuit de 2 jours dans le désert depuis Marrakech. Ce circuit dans le désert du Sahara vous emmènera au-delà pour explorer la palmeraie verte, les vues des montagnes du Haut Atlas et les sites du patrimoine mondial.");
+            frTranslation.setFullDescription("Le circuit de 2 jours dans le désert depuis Marrakech vers Zagora au Maroc offre des activités amusantes et exaltantes pour les touristes et nous planifions donc nos activités afin que les touristes puissent vivre toute la culture marocaine à Marrakech. Le circuit de 2 jours dans le désert depuis Marrakech vers Zagora en est un excellent exemple. Cette excursion de deux jours et une nuit dans le désert est un événement de groupe avec des coûts partagés qui réunit environ 14 touristes pour une expérience de désert amusante. Cela signifie que les couples ou un groupe de voyageurs paient beaucoup moins que s'ils optaient pour un circuit privé Marrakech Zagora.\n\nUn chauffeur privé et un nouveau véhicule climatisé seront à votre disposition pour visiter les principaux points forts du désert et du Sahara depuis Marrakech. Nos circuits dans le désert du Sahara commencent depuis Marrakech ou Fès et couvrent toutes les attractions touristiques, notamment la kasbah d'Ait Ben Haddou, la vallée du Draa, la palmeraie de Zagora et l'expérience de balade à dos de chameau avec un séjour au camp du désert dans les dunes de Zagora.");
+            frTranslation.setLocation("Marrakech vers Zagora");
+            frTranslation.setCategory("Circuits du désert du Sahara");
+            frTranslation.setDepartureLocation("Marrakech");
+            frTranslation.setReturnLocation("Marrakech");
+            frTranslation.setMeetingTime("15 minutes avant l'heure de départ à 8h");
+            frTranslation.setAvailability("Tous les jours");
+            frTranslation.setWhatToExpect("Découvrez le désert du Sahara de Zagora et les kasbahs du patrimoine mondial lors de ce circuit de 2 jours dans le désert depuis Marrakech. Ce circuit dans le désert du Sahara vous emmènera au-delà pour explorer la palmeraie verte, les vues des montagnes du Haut Atlas et les sites du patrimoine mondial.");
+        } else {
+            frTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("fr")
+                    .title("Circuit de 2 jours dans le désert depuis Marrakech")
+                    .shortDescription("Découvrez le désert du Sahara de Zagora et les kasbahs du patrimoine mondial lors de ce circuit de 2 jours dans le désert depuis Marrakech. Ce circuit dans le désert du Sahara vous emmènera au-delà pour explorer la palmeraie verte, les vues des montagnes du Haut Atlas et les sites du patrimoine mondial.")
+                    .fullDescription("Le circuit de 2 jours dans le désert depuis Marrakech vers Zagora au Maroc offre des activités amusantes et exaltantes pour les touristes et nous planifions donc nos activités afin que les touristes puissent vivre toute la culture marocaine à Marrakech. Le circuit de 2 jours dans le désert depuis Marrakech vers Zagora en est un excellent exemple. Cette excursion de deux jours et une nuit dans le désert est un événement de groupe avec des coûts partagés qui réunit environ 14 touristes pour une expérience de désert amusante. Cela signifie que les couples ou un groupe de voyageurs paient beaucoup moins que s'ils optaient pour un circuit privé Marrakech Zagora.\n\nUn chauffeur privé et un nouveau véhicule climatisé seront à votre disposition pour visiter les principaux points forts du désert et du Sahara depuis Marrakech. Nos circuits dans le désert du Sahara commencent depuis Marrakech ou Fès et couvrent toutes les attractions touristiques, notamment la kasbah d'Ait Ben Haddou, la vallée du Draa, la palmeraie de Zagora et l'expérience de balade à dos de chameau avec un séjour au camp du désert dans les dunes de Zagora.")
+                    .location("Marrakech vers Zagora")
+                    .category("Circuits du désert du Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutes avant l'heure de départ à 8h")
+                    .availability("Tous les jours")
+                    .whatToExpect("Découvrez le désert du Sahara de Zagora et les kasbahs du patrimoine mondial lors de ce circuit de 2 jours dans le désert depuis Marrakech. Ce circuit dans le désert du Sahara vous emmènera au-delà pour explorer la palmeraie verte, les vues des montagnes du Haut Atlas et les sites du patrimoine mondial.")
+                    .build();
+        }
+        translations.add(frTranslation);
+        
+        // Spanish translation
+        Optional<ActivityTranslation> existingEs = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "es");
+        ActivityTranslation esTranslation;
+        if (existingEs.isPresent()) {
+            esTranslation = existingEs.get();
+            esTranslation.setTitle("Viaje de 2 días al desierto desde Marrakech");
+            esTranslation.setShortDescription("Descubre el desierto del Sahara de Zagora y las kasbahs del patrimonio mundial durante este viaje de 2 días al desierto desde Marrakech. Este tour al desierto del Sahara te llevará más allá para explorar el palmeral verde, las vistas de las montañas del Alto Atlas y los sitios del patrimonio mundial.");
+            esTranslation.setFullDescription("El viaje de 2 días al desierto desde Marrakech a Zagora, Marruecos, ofrece actividades divertidas y emocionantes para los turistas y, por lo tanto, planificamos nuestras actividades para que los turistas puedan experimentar toda la cultura marroquí mientras están en Marrakech. El tour de 2 días al desierto desde Marrakech a Zagora es un gran ejemplo de esta política. Esta excursión de dos días y una noche al desierto es un evento grupal con costos compartidos que reúne a unos 14 turistas para una experiencia divertida en el desierto. Esto significa que las parejas o un grupo de viajeros pagan significativamente menos de lo que pagarían si optaran por un tour privado de Marrakech a Zagora.\n\nUn conductor privado y un vehículo nuevo con aire acondicionado estarán a tu disposición para visitar los principales puntos destacados del desierto y del Sahara desde Marrakech. Nuestros tours del desierto del Sahara comienzan desde Marrakech o Fez y cubren todas las atracciones turísticas, incluyendo la kasbah de Ait Ben Haddou, el valle del Draa, el palmeral de Zagora y la experiencia de paseo en camello con una estancia en el campamento del desierto en las dunas de Zagora.");
+            esTranslation.setLocation("Marrakech a Zagora");
+            esTranslation.setCategory("Tours del Desierto del Sahara");
+            esTranslation.setDepartureLocation("Marrakech");
+            esTranslation.setReturnLocation("Marrakech");
+            esTranslation.setMeetingTime("15 minutos antes de la hora de salida a las 8 am");
+            esTranslation.setAvailability("Todos los días");
+            esTranslation.setWhatToExpect("Descubre el desierto del Sahara de Zagora y las kasbahs del patrimonio mundial durante este viaje de 2 días al desierto desde Marrakech. Este tour al desierto del Sahara te llevará más allá para explorar el palmeral verde, las vistas de las montañas del Alto Atlas y los sitios del patrimonio mundial.");
+        } else {
+            esTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("es")
+                    .title("Viaje de 2 días al desierto desde Marrakech")
+                    .shortDescription("Descubre el desierto del Sahara de Zagora y las kasbahs del patrimonio mundial durante este viaje de 2 días al desierto desde Marrakech. Este tour al desierto del Sahara te llevará más allá para explorar el palmeral verde, las vistas de las montañas del Alto Atlas y los sitios del patrimonio mundial.")
+                    .fullDescription("El viaje de 2 días al desierto desde Marrakech a Zagora, Marruecos, ofrece actividades divertidas y emocionantes para los turistas y, por lo tanto, planificamos nuestras actividades para que los turistas puedan experimentar toda la cultura marroquí mientras están en Marrakech. El tour de 2 días al desierto desde Marrakech a Zagora es un gran ejemplo de esta política. Esta excursión de dos días y una noche al desierto es un evento grupal con costos compartidos que reúne a unos 14 turistas para una experiencia divertida en el desierto. Esto significa que las parejas o un grupo de viajeros pagan significativamente menos de lo que pagarían si optaran por un tour privado de Marrakech a Zagora.\n\nUn conductor privado y un vehículo nuevo con aire acondicionado estarán a tu disposición para visitar los principales puntos destacados del desierto y del Sahara desde Marrakech. Nuestros tours del desierto del Sahara comienzan desde Marrakech o Fez y cubren todas las atracciones turísticas, incluyendo la kasbah de Ait Ben Haddou, el valle del Draa, el palmeral de Zagora y la experiencia de paseo en camello con una estancia en el campamento del desierto en las dunas de Zagora.")
+                    .location("Marrakech a Zagora")
+                    .category("Tours del Desierto del Sahara")
+                    .departureLocation("Marrakech")
+                    .returnLocation("Marrakech")
+                    .meetingTime("15 minutos antes de la hora de salida a las 8 am")
+                    .availability("Todos los días")
+                    .whatToExpect("Descubre el desierto del Sahara de Zagora y las kasbahs del patrimonio mundial durante este viaje de 2 días al desierto desde Marrakech. Este tour al desierto del Sahara te llevará más allá para explorar el palmeral verde, las vistas de las montañas del Alto Atlas y los sitios del patrimonio mundial.")
+                    .build();
+        }
+        translations.add(esTranslation);
+        
+        // German translation
+        Optional<ActivityTranslation> existingDe = activityTranslationRepository
+                .findByActivityIdAndLanguageCode(activity.getId(), "de");
+        ActivityTranslation deTranslation;
+        if (existingDe.isPresent()) {
+            deTranslation = existingDe.get();
+            deTranslation.setTitle("2-Tage-Wüstentour ab Marrakesch");
+            deTranslation.setShortDescription("Entdecken Sie die Sahara-Wüste von Zagora und die Weltkulturerbe-Kasbahs während dieser 2-Tage-Wüstentour ab Marrakesch. Diese Tour zur Sahara-Wüste führt Sie darüber hinaus, um die grüne Palmenoase, die Aussichten auf das Hohe Atlasgebirge und die Weltkulturerbestätten zu erkunden.");
+            deTranslation.setFullDescription("Die 2-Tage-Wüstentour von Marrakesch nach Zagora, Marokko, bietet unterhaltsame und aufregende Aktivitäten für Touristen, und daher planen wir unsere Aktivitäten so, dass Touristen die gesamte marokkanische Kultur in Marrakesch erleben können. Die 2-Tage-Wüstentour von Marrakesch nach Zagora ist ein großartiges Beispiel für diese Politik. Diese zweitägige einnächtige Wüstenexkursion ist ein Gruppenevent mit geteilten Kosten, das etwa 14 Touristen für ein unterhaltsames Wüstenerlebnis zusammenbringt. Das bedeutet, dass Paare oder eine Gruppe von Reisenden deutlich weniger zahlen, als wenn sie sich für eine private Marrakesch-Zagora-Tour entscheiden würden.\n\nEin privater Fahrer und ein neues klimatisiertes Fahrzeug stehen Ihnen zur Verfügung, um die wichtigsten Wüsten- und Sahara-Highlights von Marrakesch zu besuchen. Unsere Sahara-Wüstentouren beginnen von Marrakesch oder Fes und decken alle touristischen Attraktionen ab, einschließlich der Kasbah Ait Ben Haddou, dem Draa-Tal, der Palmenoase von Zagora und dem Kamelritt-Erlebnis mit einem Aufenthalt im Wüstencamp in den Dünen von Zagora.");
+            deTranslation.setLocation("Marrakesch nach Zagora");
+            deTranslation.setCategory("Sahara-Wüstentouren");
+            deTranslation.setDepartureLocation("Marrakesch");
+            deTranslation.setReturnLocation("Marrakesch");
+            deTranslation.setMeetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr");
+            deTranslation.setAvailability("Täglich");
+            deTranslation.setWhatToExpect("Entdecken Sie die Sahara-Wüste von Zagora und die Weltkulturerbe-Kasbahs während dieser 2-Tage-Wüstentour ab Marrakesch. Diese Tour zur Sahara-Wüste führt Sie darüber hinaus, um die grüne Palmenoase, die Aussichten auf das Hohe Atlasgebirge und die Weltkulturerbestätten zu erkunden.");
+        } else {
+            deTranslation = ActivityTranslation.builder()
+                    .activity(activity)
+                    .languageCode("de")
+                    .title("2-Tage-Wüstentour ab Marrakesch")
+                    .shortDescription("Entdecken Sie die Sahara-Wüste von Zagora und die Weltkulturerbe-Kasbahs während dieser 2-Tage-Wüstentour ab Marrakesch. Diese Tour zur Sahara-Wüste führt Sie darüber hinaus, um die grüne Palmenoase, die Aussichten auf das Hohe Atlasgebirge und die Weltkulturerbestätten zu erkunden.")
+                    .fullDescription("Die 2-Tage-Wüstentour von Marrakesch nach Zagora, Marokko, bietet unterhaltsame und aufregende Aktivitäten für Touristen, und daher planen wir unsere Aktivitäten so, dass Touristen die gesamte marokkanische Kultur in Marrakesch erleben können. Die 2-Tage-Wüstentour von Marrakesch nach Zagora ist ein großartiges Beispiel für diese Politik. Diese zweitägige einnächtige Wüstenexkursion ist ein Gruppenevent mit geteilten Kosten, das etwa 14 Touristen für ein unterhaltsames Wüstenerlebnis zusammenbringt. Das bedeutet, dass Paare oder eine Gruppe von Reisenden deutlich weniger zahlen, als wenn sie sich für eine private Marrakesch-Zagora-Tour entscheiden würden.\n\nEin privater Fahrer und ein neues klimatisiertes Fahrzeug stehen Ihnen zur Verfügung, um die wichtigsten Wüsten- und Sahara-Highlights von Marrakesch zu besuchen. Unsere Sahara-Wüstentouren beginnen von Marrakesch oder Fes und decken alle touristischen Attraktionen ab, einschließlich der Kasbah Ait Ben Haddou, dem Draa-Tal, der Palmenoase von Zagora und dem Kamelritt-Erlebnis mit einem Aufenthalt im Wüstencamp in den Dünen von Zagora.")
+                    .location("Marrakesch nach Zagora")
+                    .category("Sahara-Wüstentouren")
+                    .departureLocation("Marrakesch")
+                    .returnLocation("Marrakesch")
+                    .meetingTime("15 Minuten vor der Abfahrtszeit um 8 Uhr")
+                    .availability("Täglich")
+                    .whatToExpect("Entdecken Sie die Sahara-Wüste von Zagora und die Weltkulturerbe-Kasbahs während dieser 2-Tage-Wüstentour ab Marrakesch. Diese Tour zur Sahara-Wüste führt Sie darüber hinaus, um die grüne Palmenoase, die Aussichten auf das Hohe Atlasgebirge und die Weltkulturerbestätten zu erkunden.")
+                    .build();
+        }
+        translations.add(deTranslation);
+        
+        // Save all translations
+        activityTranslationRepository.saveAll(translations);
+    }
+    
+    /**
+     * Syncs Ouzoud destination + flagship day trip with copy from
+     * https://www.tour-in-morocco.com/tour-destination/ouzoud-waterfalls/
+     */
+    private void applyTourInMoroccoOuzoudDestinationPageReference() {
+        destinationRepository.findBySlug(SlugUtil.generateSlug("Ouzoud Waterfalls")).ifPresent(d -> {
+            d.setShortDescription(OUZOUD_DESTINATION_SHORT);
+            d.setFullDescription(OUZOUD_DESTINATION_FULL);
+            destinationRepository.save(d);
+        });
+
+        String actSlug = SlugUtil.generateSlug("Marrakech Day Trip to Ouzoud Waterfalls");
+        activityRepository.findBySlug(actSlug).ifPresent(a -> {
+            a.setTitle("Marrakech Day Trip to Ouzoud Waterfalls");
+            a.setShortDescription(OUZOUD_ACTIVITY_SHORT);
+            a.setFullDescription(OUZOUD_ACTIVITY_FULL);
+            a.setWhatToExpect(OUZOUD_ACTIVITY_SHORT);
+            a.setCategory("Marrakech Day Trips");
+            activityRepository.save(a);
+        });
+        System.out.println("Applied Tour-in-Morocco Ouzoud destination / activity reference (where rows exist).");
+    }
+
+    /**
+     * Syncs the Sahara Desert destination and its flagship tours with listing copy and promotional prices
+     * from the reference page: https://www.tour-in-morocco.com/tour-destination/sahara-desert/
+     */
+    private void applyTourInMoroccoSaharaDestinationPageReference() {
+        String saharaSlug = SlugUtil.generateSlug("Sahara Desert");
+        destinationRepository.findBySlug(saharaSlug).ifPresent(d -> {
+            d.setShortDescription(
+                    "Shared Sahara Desert tours — Merzouga dunes, UNESCO kasbahs, camel rides, and nights under the stars.");
+            d.setFullDescription(
+                    "The people of this country are super friendly and welcoming. Tour in Morocco invites you to come and explore the pristine beauty of this country, Sahara, Mountains, and Beaches. For your convenience, we have designed and tailor-made amazing Moroccan trip packages and Sahara desert Tours. Let us take care of all the worries of your trips and tours to Morocco.\n\n"
+                            + "The Sahara Desert of Morocco is one of the most extraordinary destinations in the world: sand dunes of Merzouga and Erg Chebbi, camel rides, luxury desert camps, and UNESCO kasbahs from the High Atlas to the golden dunes.");
+            destinationRepository.save(d);
+        });
+
+        Map<String, String[]> rows = new LinkedHashMap<>();
+        rows.put("2-day-desert-tour-from-marrakech", new String[]{
+                "Shared Tour from Marrakech to Sahara 2 Days",
+                "Discover the Sahara desert of Morocco and the world heritage kasbahs during this Shared Sahara Desert Tour from Marrakech 2 Days. This Shared Desert Tour from Marrakech will take you beyond to explore the green palm grove, the high atlas mountain views, and the world heritage sites.",
+                "59.00", "80.00", "Shared Sahara Desert Tours"
+        });
+        rows.put("3-day-sahara-desert-tour-from-marrakech", new String[]{
+                "Shared Sahara Desert Tour from Marrakech 3 Days",
+                "This Shared Sahara Desert Tour from Marrakech 3 Days will take you to explore the southern site's town renowned Unesco Heritage site or fortified kasbahs. Soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for a memorable Group Trip to the Sahara desert of Morocco...",
+                "80.00", "100.00", "Shared Sahara Desert Tours"
+        });
+        rows.put("3-day-sahara-desert-trip-from-marrakech-to-fes", new String[]{
+                "Group Sahara Desert Trip from Marrakech to Fes 3 Days",
+                "This Group Sahara Desert Trip from Marrakech to Fes 3 Days will take you through the Sahara Desert, explore the high atlas mountains, southern market site's renowned Unesco Heritage site, or fortified kasbahs...",
+                "120.00", "160.00", "Shared Sahara Desert Tours"
+        });
+        rows.put("4-days-desert-trip-from-marrakesh", new String[]{
+                "Shared Desert Tour from Marrakesh 4 Days",
+                "Shared Desert Tour from Marrakesh 4 Days to soak up the loveliness of your surroundings and engage in a pleasant conversation with multi-lingual locals for the memorable Shared Sahara Desert Tours to the Merzouga and camel ride...",
+                "99.00", "159.00", "Shared Sahara Desert Tours"
+        });
+        rows.put("tour-from-fes-to-marrakech-4-days", new String[]{
+                "Tour from Fes to Marrakech 4 Days",
+                "Do you want a real change of scenery far from all the constraints of the modern world? This adventure trip in the desert of Morocco leads you to the heart of the Sahara Desert in landscapes of beauty. Explore imperial cities, the High Atlas, Merzouga dunes, and UNESCO kasbahs on this four-day route to Marrakech.",
+                "129.00", "160.00", "Sahara Desert Tours"
+        });
+        rows.put("tour-from-fes-to-marrakech-3-days", new String[]{
+                "Tour from Fes to Marrakech 3 Days",
+                "Take a 3 days Sahara desert Trip from Marrakesh, the home to some of the most extraordinary structures including the beautiful Kasbah and UNESCO world heritage, a number of amazing Gorges and green valleys, an open-air theatre, and beautiful sand dunes attract tourists from all over the world.",
+                "99.00", "140.00", "Sahara Desert Tours"
+        });
+
+        List<Activity> toSave = new ArrayList<>();
+        for (Map.Entry<String, String[]> e : rows.entrySet()) {
+            activityRepository.findBySlug(e.getKey()).ifPresent(a -> {
+                String[] v = e.getValue();
+                a.setTitle(v[0]);
+                a.setShortDescription(v[1]);
+                a.setPrice(new BigDecimal(v[2]));
+                a.setPremiumPrice(new BigDecimal(v[3]));
+                a.setBudgetPrice(new BigDecimal(v[2]));
+                a.setCategory(v[4]);
+                toSave.add(a);
+            });
+        }
+        if (!toSave.isEmpty()) {
+            activityRepository.saveAll(toSave);
+            System.out.println("Applied Tour-in-Morocco Sahara page reference to " + toSave.size() + " activities.");
+        }
     }
     
     private void seedSettings() {

@@ -16,6 +16,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.beans.factory.annotation.Value;
@@ -68,12 +69,16 @@ public class SecurityConfig {
                         .requestMatchers("/api/activities/**").permitAll()
                         .requestMatchers("/api/settings").permitAll()
                         .requestMatchers("/api/reviews/activity/**").permitAll()
+                        .requestMatchers("/api/reviews/recent").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/contact/messages").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/contact/my-messages").hasAuthority("ROLE_CLIENT")
                         .requestMatchers("/uploads/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/api-docs/**", "/v3/api-docs/**").permitAll()
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/api/bookings/**").hasAnyRole("CLIENT", "ADMIN")
-                        .requestMatchers("/api/reviews/**").hasAnyRole("CLIENT", "ADMIN")
-                        .requestMatchers("/api/favorites/**").hasAnyRole("CLIENT", "ADMIN")
+                        .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
+                        .requestMatchers("/api/bookings/**").hasAnyAuthority("ROLE_CLIENT", "ROLE_ADMIN")
+                        .requestMatchers("/api/reviews/**").hasAnyAuthority("ROLE_CLIENT", "ROLE_ADMIN")
+                        .requestMatchers("/api/favorites/**").hasAnyAuthority("ROLE_CLIENT", "ROLE_ADMIN")
+                        .requestMatchers("/api/notifications/**").hasAnyAuthority("ROLE_CLIENT", "ROLE_ADMIN")
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

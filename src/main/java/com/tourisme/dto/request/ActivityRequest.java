@@ -1,6 +1,7 @@
 package com.tourisme.dto.request;
 
 import com.tourisme.entity.Activity.DifficultyLevel;
+import com.tourisme.entity.Activity.TourType;
 import jakarta.validation.constraints.*;
 import lombok.Data;
 
@@ -25,6 +26,12 @@ public class ActivityRequest {
     @DecimalMin(value = "0.0", inclusive = false, message = "Price must be greater than 0")
     private BigDecimal price;
     
+    @DecimalMin(value = "0.0", inclusive = false, message = "Premium price must be greater than 0")
+    private BigDecimal premiumPrice;
+    
+    @DecimalMin(value = "0.0", inclusive = false, message = "Budget price must be greater than 0")
+    private BigDecimal budgetPrice;
+    
     @Size(max = 50, message = "Duration must not exceed 50 characters")
     private String duration;
     
@@ -35,6 +42,8 @@ public class ActivityRequest {
     private String category;
     
     private DifficultyLevel difficultyLevel;
+    
+    private TourType tourType;
     
     @NotNull(message = "Destination ID is required")
     private Long destinationId;
@@ -80,4 +89,6 @@ public class ActivityRequest {
     
     @Size(max = 500, message = "Map URL must not exceed 500 characters")
     private String mapUrl;
+    
+    private List<ActivityTranslationRequest> translations = new ArrayList<>();
 }

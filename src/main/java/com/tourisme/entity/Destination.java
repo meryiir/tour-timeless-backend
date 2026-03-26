@@ -55,6 +55,15 @@ public class Destination {
     @Builder.Default
     private List<Activity> activities = new ArrayList<>();
     
+    @OneToMany(mappedBy = "destination", cascade = CascadeType.ALL, orphanRemoval = true)
+    @Builder.Default
+    private List<DestinationTranslation> translations = new ArrayList<>();
+
+    @OneToMany(mappedBy = "destination", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sortOrder ASC")
+    @Builder.Default
+    private List<DestinationPageCard> pageCards = new ArrayList<>();
+    
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

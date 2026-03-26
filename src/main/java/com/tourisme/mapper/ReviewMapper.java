@@ -13,14 +13,20 @@ public class ReviewMapper {
     private final ActivityMapper activityMapper;
     
     public ReviewResponse toResponse(Review review) {
+        return toResponse(review, "en");
+    }
+
+    public ReviewResponse toResponse(Review review, String languageCode) {
         if (review == null) {
             return null;
         }
-        
+
+        String lang = languageCode == null || languageCode.isBlank() ? "en" : languageCode.trim();
+
         return ReviewResponse.builder()
                 .id(review.getId())
                 .user(userMapper.toResponse(review.getUser()))
-                .activity(activityMapper.toResponse(review.getActivity()))
+                .activity(activityMapper.toSummaryResponse(review.getActivity(), lang))
                 .rating(review.getRating())
                 .comment(review.getComment())
                 .approved(review.getApproved())

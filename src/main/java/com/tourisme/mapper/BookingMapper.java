@@ -21,7 +21,7 @@ public class BookingMapper {
                 .id(booking.getId())
                 .bookingReference(booking.getBookingReference())
                 .user(userMapper.toResponse(booking.getUser()))
-                .activity(activityMapper.toResponse(booking.getActivity()))
+                .activity(activityMapper.toSummaryResponse(booking.getActivity()))
                 .bookingDate(booking.getBookingDate())
                 .travelDate(booking.getTravelDate())
                 .numberOfPeople(booking.getNumberOfPeople())

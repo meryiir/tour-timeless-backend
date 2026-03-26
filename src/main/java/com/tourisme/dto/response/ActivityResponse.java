@@ -1,6 +1,7 @@
 package com.tourisme.dto.response;
 
 import com.tourisme.entity.Activity.DifficultyLevel;
+import com.tourisme.entity.Activity.TourType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,10 +24,13 @@ public class ActivityResponse {
     private String shortDescription;
     private String fullDescription;
     private BigDecimal price;
+    private BigDecimal premiumPrice;
+    private BigDecimal budgetPrice;
     private String duration;
     private String location;
     private String category;
     private DifficultyLevel difficultyLevel;
+    private TourType tourType;
     private BigDecimal ratingAverage;
     private Integer reviewCount;
     private Boolean featured;
@@ -46,6 +50,8 @@ public class ActivityResponse {
     private String whatToExpect;
     private List<String> complementaries = new ArrayList<>();
     private String mapUrl;
+    /** FK for admin forms when {@link #destination} is null or not in a dropdown page of results. */
+    private Long destinationId;
     private DestinationResponse destination;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

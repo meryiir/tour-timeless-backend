@@ -2,6 +2,8 @@ package com.tourisme.security;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -13,6 +15,8 @@ import java.util.Date;
 
 @Component
 public class JwtTokenProvider {
+    
+    private static final Logger logger = LoggerFactory.getLogger(JwtTokenProvider.class);
     
     @Value("${app.jwt.secret}")
     private String jwtSecret;
@@ -54,7 +58,23 @@ public class JwtTokenProvider {
                     .build()
                     .parseSignedClaims(token);
             return true;
-        } catch (JwtException | IllegalArgumentException e) {
+        } catch (ExpiredJwtException e) {
+            logger.warn("JWT token is expired: " + e.getMessage());
+            return false;
+        } catch (UnsupportedJwtException e) {
+            logger.warn("JWT token is unsupported: " + e.getMessage());
+            return false;
+        } catch (MalformedJwtException e) {
+            logger.warn("Invalid JWT token format: " + e.getMessage());
+            return false;
+        } catch (SecurityException e) {
+            logger.warn("Invalid JWT signature or security error: " + e.getMessage());
+            return false;
+        } catch (IllegalArgumentException e) {
+            logger.warn("JWT token is empty or null: " + e.getMessage());
+            return false;
+        } catch (JwtException e) {
+            logger.warn("JWT validation error: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             return false;
         }
     }

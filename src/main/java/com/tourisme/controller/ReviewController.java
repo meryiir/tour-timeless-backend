@@ -31,6 +31,13 @@ public class ReviewController {
             @PageableDefault(size = 20) Pageable pageable) {
         return ResponseEntity.ok(reviewService.getActivityReviews(activityId, pageable));
     }
+
+    @GetMapping("/recent")
+    public ResponseEntity<Page<ReviewResponse>> getRecentReviews(
+            @PageableDefault(size = 9) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(reviewService.getRecentApprovedReviews(pageable, lang));
+    }
     
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteReview(@PathVariable Long id) {

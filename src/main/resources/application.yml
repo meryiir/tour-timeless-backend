@@ -1,12 +1,24 @@
 spring:
   application:
     name: tourisme-backend
-  
+
+  # --- Where your data lives (safe across backend restarts) ---
+  # • PostgreSQL holds all destinations, activities, bookings, users, etc. Restarting Spring Boot does not wipe the DB.
+  # • docker-compose.yml uses a named volume (tourisme_pgdata) so data survives container restarts.
+  #   Avoid "docker compose down -v" unless you intend to delete the database volume.
+  # • Uploaded images are files under app.upload.dir (default ./uploads relative to the process working directory).
+  # • ddl-auto=update only evolves the schema; it does not drop tables or rows. Never use create-drop in production.
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/tourisme}
     username: ${DB_USERNAME:postgres}
     password: ${DB_PASSWORD:5392}
     driver-class-name: org.postgresql.Driver
+
+  # Runs before JPA. baseline-on-migrate: existing DBs without flyway_schema_history are baselined, then V2+ apply.
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
   
   jpa:
     hibernate:
@@ -26,8 +38,8 @@ spring:
   servlet:
     multipart:
       enabled: true
-      max-file-size: 10MB
-      max-request-size: 10MB
+      max-file-size: 64MB
+      max-request-size: 64MB
 
 server:
   port: ${SERVER_PORT:8080}
@@ -47,6 +59,40 @@ app:
   
   upload:
     dir: ${UPLOAD_DIR:uploads}
+  
+  # Same OAuth 2.0 Client ID as the frontend (VITE_GOOGLE_CLIENT_ID). Used to verify token audience.
+  google:
+    client-id: ${GOOGLE_CLIENT_ID:}
+
+  # Outgoing email for admin replies to contact form (optional).
+  # Set env: MAIL_HOST, MAIL_PORT (default 587), MAIL_USERNAME, MAIL_PASSWORD (Gmail: app password).
+  contact:
+    mail-from-name: ${MAIL_FROM_NAME:Tour in Morocco}
+
+  # Startup seeding: insert-only / empty-DB paths by default — your PostgreSQL data is not reset on restart.
+  seeding:
+    # When false, DataSeeder does not run at all (strongest guarantee nothing touches the DB on startup).
+    # Keep true for first install; set false after go-live if you want zero seeder runs.
+    run-on-startup: ${SEED_RUN_ON_STARTUP:true}
+    # When true, every backend start overwrites Sahara/Ouzoud reference copy and specific activity slugs/prices.
+    # Default false: PostgreSQL is the source of truth; restart the app without wiping your edits.
+    apply-tour-in-morocco-reference: ${APPLY_TOUR_IN_MOROCCO_REFERENCE:false}
+    # When true, re-links activities that look like Sahara tours to the Sahara destination (can undo manual destination changes).
+    # Default false so your destination assignments persist across restarts.
+    relink-sahara-activities: ${RELINK_SAHARA_ACTIVITIES:false}
+    # When true, sets every inactive activity back to active on each startup.
+    # Default false so deactivating a tour in admin stays deactivated after restart.
+    reactivate-all-activities: ${REACTIVATE_ALL_ACTIVITIES:false}
+    # When false (default), destinations you delete in admin stay deleted after restart (no auto re-insert of Marrakech/Sahara or default Marrakech page cards).
+    # When true, legacy behavior: missing default destinations/cards are recreated on each startup.
+    recreate-missing-default-destinations: ${RECREATE_MISSING_DEFAULT_DESTINATIONS:false}
+    # When true, insert-only seed for Ouzoud / Ourika if missing while the DB already has other destinations.
+    # Default false so catalog destinations you removed in admin stay gone after restart (fresh empty DB still gets them once).
+    seed-catalog-day-trip-destinations: ${SEED_CATALOG_DAY_TRIP_DESTINATIONS:false}
+  
+  # Used by GET /api/admin/backup/postgres-data — must point to pg_dump on the machine running Spring Boot.
+  backup:
+    pg-dump-path: ${PG_DUMP_PATH:pg_dump}
 
 springdoc:
   api-docs:

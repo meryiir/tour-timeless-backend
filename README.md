@@ -38,34 +38,41 @@ A complete REST API backend for a tourism platform built with Spring Boot and Po
 
 ### 1. Database Setup
 
-#### Option A: Using Docker (Recommended)
+#### Option A: Docker Compose (recommended — data survives restarts)
+
+From the **repository root** (folder that contains `backend/` and `docker-compose.yml`):
+
+```bash
+docker compose up -d
+```
+
+This uses database `tourisme` on port `5432` with defaults matching `application.yml` (user `postgres`, password `5392`) and a **named volume** so data is not lost when you stop the container.
+
+#### Option B: One-off Docker container (no named volume by default)
 
 ```bash
 docker run --name tourisme-postgres \
-  -e POSTGRES_DB=tourisme_db \
+  -e POSTGRES_DB=tourisme \
   -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_PASSWORD=5392 \
   -p 5432:5432 \
-  -d postgres:15
+  -v tourisme_pgdata:/var/lib/postgresql/data \
+  -d postgres:16-alpine
 ```
 
-#### Option B: Local PostgreSQL
+#### Option C: Local PostgreSQL
 
-1. Create a new PostgreSQL database:
-```sql
-CREATE DATABASE tourisme_db;
-```
-
-2. Update `application.yml` with your database credentials if different from defaults.
+1. Create database `tourisme` (or set `DB_URL` to match your DB name).
+2. Update `application.yml` or environment variables if credentials differ from defaults.
 
 ### 2. Configuration
 
 The application uses environment variables for configuration. Default values are set in `application.yml`:
 
 ```yaml
-DB_URL: jdbc:postgresql://localhost:5432/tourisme_db
+DB_URL: jdbc:postgresql://localhost:5432/tourisme
 DB_USERNAME: postgres
-DB_PASSWORD: postgres
+DB_PASSWORD: 5392
 JWT_SECRET: your-256-bit-secret-key-change-this-in-production-minimum-32-characters
 CORS_ORIGINS: http://localhost:5173,http://localhost:3000
 SERVER_PORT: 8080
@@ -87,6 +94,40 @@ mvn spring-boot:run
 ```
 
 The application will start on `http://localhost:8080`
+
+### PostgreSQL data backup and restore (no schema in the dump file)
+
+Scripts export **only row data** (`pg_dump --data-only`): no `CREATE TABLE`, functions, or extensions. Restore assumes the **schema already exists** (e.g. tables created by Hibernate `ddl-auto: update` after you start the app once).
+
+**Backup from the admin panel:** Dashboard or Settings → **Download PostgreSQL data (.sql)**. The Spring Boot host must have `pg_dump` available (or set environment variable `PG_DUMP_PATH` to the full path of `pg_dump` / `pg_dump.exe`).
+
+**Backup (PowerShell, from repository root):**
+
+```powershell
+.\scripts\postgres-backup.ps1
+```
+
+- Writes `backups\tourisme-data-<timestamp>.sql` (gitignored).
+- Add `-UseInserts` for `INSERT` statements instead of `COPY` (larger, easier to read).
+- Override `-User`, `-Database`, `-Password` if they differ from `application.yml`.
+
+Requires `pg_dump` on your PATH (e.g. `...\PostgreSQL\16\bin`).
+
+**pgAdmin:** Backup → **Dump options #1** → enable **Data only** (no schema). Restore into a database that already has the tables.
+
+**Restore (stop Spring Boot first):**
+
+```powershell
+.\scripts\postgres-restore.ps1 -SqlFile ".\backups\tourisme-data-YYYY-MM-DD-HHMMSS.sql"
+```
+
+If tables still have old rows and you get duplicate-key errors, clear data then reload:
+
+```powershell
+.\scripts\postgres-restore.ps1 -SqlFile ".\backups\..." -ClearExistingData
+```
+
+The admin panel **Download backup (JSON)** is a separate, app-level export (no real password hashes for users).
 
 ### 4. Verify Setup
 
