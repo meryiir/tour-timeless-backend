@@ -87,7 +87,7 @@ public class ActivityRequest {
     
     private List<String> complementaries = new ArrayList<>();
     
-    @Size(max = 500, message = "Map URL must not exceed 500 characters")
+    @Size(max = 8192, message = "Map URL must not exceed 8192 characters")
     private String mapUrl;
     
     private List<ActivityTranslationRequest> translations = new ArrayList<>();

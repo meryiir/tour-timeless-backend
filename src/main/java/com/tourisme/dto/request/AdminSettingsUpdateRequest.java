@@ -1,18 +1,22 @@
-package com.tourisme.dto.response;
+package com.tourisme.dto.request;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.util.List;
 
+/**
+ * Full settings payload for {@code PUT /api/admin/settings} (JSON body).
+ * Null fields are left unchanged; use empty string to clear text fields.
+ */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class SettingsResponse {
-    private Long id;
+public class AdminSettingsUpdateRequest {
+
     private String siteName;
     private String logoUrl;
     private String contactEmail;
@@ -28,5 +32,5 @@ public class SettingsResponse {
     private String contactPhonesJson;
     private String businessHours;
     private String aboutContentJson;
-    private LocalDateTime updatedAt;
+    private List<SettingsTranslationRequest> translations;
 }

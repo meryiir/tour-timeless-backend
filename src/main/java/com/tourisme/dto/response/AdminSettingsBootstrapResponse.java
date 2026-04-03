@@ -6,12 +6,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
+/** Full settings row + all translation rows for the admin editor. */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class SettingsResponse {
+public class AdminSettingsBootstrapResponse {
     private Long id;
     private String siteName;
     private String logoUrl;
@@ -29,4 +31,5 @@ public class SettingsResponse {
     private String businessHours;
     private String aboutContentJson;
     private LocalDateTime updatedAt;
+    private List<SettingsTranslationRowResponse> translations;
 }

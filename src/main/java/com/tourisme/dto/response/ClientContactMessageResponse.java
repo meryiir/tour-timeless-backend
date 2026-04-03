@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -18,4 +19,6 @@ public class ClientContactMessageResponse {
     private String adminReply;
     private LocalDateTime repliedAt;
     private LocalDateTime createdAt;
+    /** Full thread history (old rows are backfilled on migration). */
+    private List<ContactThreadMessageResponse> thread;
 }

@@ -17,7 +17,9 @@ import com.tourisme.repository.DestinationTranslationRepository;
 import com.tourisme.util.SlugUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,7 +39,12 @@ public class DestinationService {
     }
 
     public Page<DestinationResponse> getAllDestinations(Pageable pageable, String languageCode) {
-        return destinationRepository.findAll(pageable)
+        // Featured first, then name — avoids “newest id last” so home page (first page) shows catalog destinations reliably.
+        Pageable sorted = PageRequest.of(
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                Sort.by(Sort.Order.desc("featured"), Sort.Order.asc("name")));
+        return destinationRepository.findAll(sorted)
                 .map(dest -> destinationMapper.toResponse(dest, languageCode, false, false));
     }
 

@@ -288,6 +288,10 @@ public class BackupService {
         m.put("youtubeUrl", s.getYoutubeUrl());
         m.put("bannerTitle", s.getBannerTitle());
         m.put("bannerSubtitle", s.getBannerSubtitle());
+        m.put("mapEmbedUrl", s.getMapEmbedUrl());
+        m.put("contactPhonesJson", s.getContactPhonesJson());
+        m.put("businessHours", s.getBusinessHours());
+        m.put("aboutContentJson", s.getAboutContentJson());
         m.put("updatedAt", s.getUpdatedAt());
         List<Map<String, Object>> trans = s.getTranslations().stream().map(this::toSettingsTranslationMap).toList();
         m.put("translations", trans);
@@ -303,6 +307,8 @@ public class BackupService {
         m.put("bannerTitle", t.getBannerTitle());
         m.put("bannerSubtitle", t.getBannerSubtitle());
         m.put("address", t.getAddress());
+        m.put("businessHours", t.getBusinessHours());
+        m.put("aboutContentJson", t.getAboutContentJson());
         return m;
     }
 }

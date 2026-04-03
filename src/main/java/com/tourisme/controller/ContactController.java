@@ -1,6 +1,7 @@
 package com.tourisme.controller;
 
 import com.tourisme.dto.request.ContactMessageRequest;
+import com.tourisme.dto.request.ContactThreadMessageRequest;
 import com.tourisme.dto.response.ClientContactMessageResponse;
 import com.tourisme.dto.response.ContactMessageResponse;
 import com.tourisme.service.ContactMessageService;
@@ -34,5 +35,14 @@ public class ContactController {
             @PageableDefault(size = 20) Pageable pageable,
             Authentication authentication) {
         return ResponseEntity.ok(contactMessageService.findMyMessages(authentication, pageable));
+    }
+
+    /** Post a follow-up message into an existing thread (client inbox). */
+    @PostMapping("/my-messages/{id}/message")
+    public ResponseEntity<ClientContactMessageResponse> postThreadMessage(
+            @PathVariable Long id,
+            @Valid @RequestBody ContactThreadMessageRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(contactMessageService.postClientThreadMessage(id, request, authentication));
     }
 }

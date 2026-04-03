@@ -14,7 +14,8 @@ public class SettingsController {
     private final SettingsService settingsService;
     
     @GetMapping
-    public ResponseEntity<SettingsResponse> getSettings() {
-        return ResponseEntity.ok(settingsService.getSettings());
+    public ResponseEntity<SettingsResponse> getSettings(
+            @RequestParam(required = false, defaultValue = "en") String lang) {
+        return ResponseEntity.ok(settingsService.getSettings(lang));
     }
 }

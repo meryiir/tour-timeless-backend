@@ -385,6 +385,10 @@ public class BackupImportService {
                         .youtubeUrl(str(sm.get("youtubeUrl")))
                         .bannerTitle(str(sm.get("bannerTitle")))
                         .bannerSubtitle(str(sm.get("bannerSubtitle")))
+                        .mapEmbedUrl(str(sm.get("mapEmbedUrl")))
+                        .contactPhonesJson(str(sm.get("contactPhonesJson")))
+                        .businessHours(str(sm.get("businessHours")))
+                        .aboutContentJson(str(sm.get("aboutContentJson")))
                         .updatedAt(parseDateTime(sm.get("updatedAt")))
                         .build();
                 s = settingsRepository.save(s);
@@ -401,6 +405,8 @@ public class BackupImportService {
                                 .bannerTitle(str(tm.get("bannerTitle")))
                                 .bannerSubtitle(str(tm.get("bannerSubtitle")))
                                 .address(str(tm.get("address")))
+                                .businessHours(str(tm.get("businessHours")))
+                                .aboutContentJson(str(tm.get("aboutContentJson")))
                                 .build();
                         settingsTranslationRepository.save(tr);
                         settingsTransCount++;

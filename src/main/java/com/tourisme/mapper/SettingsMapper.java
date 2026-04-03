@@ -37,6 +37,10 @@ public class SettingsMapper {
                 .youtubeUrl(settings.getYoutubeUrl())
                 .bannerTitle(translation.getBannerTitle())
                 .bannerSubtitle(translation.getBannerSubtitle())
+                .mapEmbedUrl(settings.getMapEmbedUrl())
+                .contactPhonesJson(settings.getContactPhonesJson())
+                .businessHours(translation.getBusinessHours())
+                .aboutContentJson(translation.getAboutContentJson())
                 .updatedAt(settings.getUpdatedAt())
                 .build();
     }

@@ -26,4 +26,8 @@ public class SettingsTranslationRequest {
     
     @Size(max = 1000, message = "Address must not exceed 1000 characters")
     private String address;
+
+    private String businessHours;
+
+    private String aboutContentJson;
 }

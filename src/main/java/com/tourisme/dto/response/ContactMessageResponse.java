@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -23,4 +24,6 @@ public class ContactMessageResponse {
     /** Non-null only on POST …/reply: whether an email was sent to the visitor. */
     private Boolean replyEmailDelivered;
     private LocalDateTime createdAt;
+    /** Full thread history (old rows are backfilled on migration). */
+    private List<ContactThreadMessageResponse> thread;
 }

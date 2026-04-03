@@ -124,6 +124,8 @@ public class TranslationService {
                     .bannerTitle(settings.getBannerTitle())
                     .bannerSubtitle(settings.getBannerSubtitle())
                     .address(settings.getAddress())
+                    .businessHours(settings.getBusinessHours())
+                    .aboutContentJson(settings.getAboutContentJson())
                     .build();
         }
         
@@ -137,6 +139,12 @@ public class TranslationService {
             if (tr.getBannerTitle() == null) tr.setBannerTitle(settings.getBannerTitle());
             if (tr.getBannerSubtitle() == null) tr.setBannerSubtitle(settings.getBannerSubtitle());
             if (tr.getAddress() == null) tr.setAddress(settings.getAddress());
+            if (tr.getBusinessHours() == null || tr.getBusinessHours().isBlank()) {
+                tr.setBusinessHours(settings.getBusinessHours());
+            }
+            if (tr.getAboutContentJson() == null || tr.getAboutContentJson().isBlank()) {
+                tr.setAboutContentJson(settings.getAboutContentJson());
+            }
             return tr;
         }
         

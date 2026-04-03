@@ -42,7 +42,7 @@ spring:
       max-request-size: 64MB
 
 server:
-  port: ${SERVER_PORT:8080}
+  port: ${SERVER_PORT:8081}
   servlet:
     context-path: /
 
@@ -66,8 +66,10 @@ app:
 
   # Outgoing email for admin replies to contact form (optional).
   # Set env: MAIL_HOST, MAIL_PORT (default 587), MAIL_USERNAME, MAIL_PASSWORD (Gmail: app password).
+  # New contact form submissions are emailed to Settings → contact email, or this override if set:
   contact:
     mail-from-name: ${MAIL_FROM_NAME:Tour in Morocco}
+    notification-to: ${CONTACT_INBOX_EMAIL:}
 
   # Startup seeding: insert-only / empty-DB paths by default — your PostgreSQL data is not reset on restart.
   seeding:
@@ -86,9 +88,9 @@ app:
     # When false (default), destinations you delete in admin stay deleted after restart (no auto re-insert of Marrakech/Sahara or default Marrakech page cards).
     # When true, legacy behavior: missing default destinations/cards are recreated on each startup.
     recreate-missing-default-destinations: ${RECREATE_MISSING_DEFAULT_DESTINATIONS:false}
-    # When true, insert-only seed for Ouzoud / Ourika if missing while the DB already has other destinations.
-    # Default false so catalog destinations you removed in admin stay gone after restart (fresh empty DB still gets them once).
-    seed-catalog-day-trip-destinations: ${SEED_CATALOG_DAY_TRIP_DESTINATIONS:false}
+    # When true, insert-only seed for Ouzoud / Ourika / Marrakech Palm Grove if missing while the DB already has other destinations.
+    # Default true so new catalog destinations appear after upgrades without extra env vars. Set SEED_CATALOG_DAY_TRIP_DESTINATIONS=false if you deleted a catalog destination and must not have it re-created on restart.
+    seed-catalog-day-trip-destinations: ${SEED_CATALOG_DAY_TRIP_DESTINATIONS:true}
   
   # Used by GET /api/admin/backup/postgres-data — must point to pg_dump on the machine running Spring Boot.
   backup:

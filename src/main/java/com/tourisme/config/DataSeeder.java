@@ -64,10 +64,12 @@ public class DataSeeder implements CommandLineRunner {
     private boolean recreateMissingDefaultDestinations;
 
     /**
-     * When true, {@link #seedOuzoudWaterfallsIfNeeded()} and {@link #seedOurikaValleyIfNeeded()} run for non-empty DBs if those slugs are missing.
-     * Default false: deleted catalog destinations stay deleted. Empty DB still seeds Ouzoud/Ourika once in the initial block.
+     * When true, {@link #seedOuzoudWaterfallsIfNeeded()}, {@link #seedOurikaValleyIfNeeded()}, and
+     * {@link #seedMarrakechPalmGroveIfNeeded()} run for non-empty DBs if those slugs are missing.
+     * Default true (see {@code application.yml}): missing catalog destinations are inserted on startup.
+     * Set {@code app.seeding.seed-catalog-day-trip-destinations=false} if you removed a catalog destination and must not re-create it.
      */
-    @Value("${app.seeding.seed-catalog-day-trip-destinations:false}")
+    @Value("${app.seeding.seed-catalog-day-trip-destinations:true}")
     private boolean seedCatalogDayTripDestinations;
 
     /**
@@ -139,6 +141,33 @@ public class DataSeeder implements CommandLineRunner {
                     + "\n\n"
                     + "On this private-oriented Marrakech day trip, wind up the Ourika road with stops at viewpoints, a walk along the river, optional hike toward the Setti Fatma waterfalls, and lunch in a terrace restaurant or guesthouse. Share mint tea with a local family, browse village stalls for argan and crafts, and return to Marrakech in the evening.";
 
+    /**
+     * Copy aligned with https://www.tour-in-morocco.com/tour-destination/marrakech-palm-grove/
+     */
+    private static final String PALM_GROVE_TOUR_IN_MOROCCO_INTRO = OUZOUD_TOUR_IN_MOROCCO_INTRO;
+
+    /** Main listing idea from the reference “Camel Ride Experience in Marrakech” card (completed for our app). */
+    private static final String PALM_GROVE_REFERENCE_LISTING_PARAGRAPH =
+            "Experience a camel ride in Marrakech — beyond the red city into the Palmeraie and palm groves. Camel rides here suit visitors who do not have time for the deep desert, and offer a chance to discover the culture of communities living among the palms.";
+
+    private static final String PALM_GROVE_DESTINATION_SHORT = PALM_GROVE_REFERENCE_LISTING_PARAGRAPH;
+
+    private static final String PALM_GROVE_DESTINATION_FULL =
+            PALM_GROVE_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + PALM_GROVE_REFERENCE_LISTING_PARAGRAPH
+                    + " Stroll or ride through thousands of date palms, pause for mint tea with families who farm this land, and enjoy Atlas views over Marrakech’s famous oasis before returning to the medina.";
+
+    private static final String PALM_GROVE_ACTIVITY_SHORT =
+            PALM_GROVE_REFERENCE_LISTING_PARAGRAPH
+                    + " Half-day or sunset outings from Marrakech with hotel pick-up — ideal for photos, families, and first-time visitors.";
+
+    private static final String PALM_GROVE_ACTIVITY_FULL =
+            PALM_GROVE_TOUR_IN_MOROCCO_INTRO
+                    + "\n\n"
+                    + "Experience a camel ride in Marrakech: this experience goes beyond expectations to explore the surroundings of the red city. Camel rides in the Palmeraie are recommended for people who do not have time to ride camels in the Sahara, and are an opportunity to discover and learn about the local culture of families living in the oasis.\n\n"
+                    + "Typical visits include pick-up in Marrakech, a gentle trek along palm-shaded paths, photo stops with Atlas backdrops, optional mint tea with locals, and return to your hotel — timing can follow morning or golden-hour schedules depending on season.";
+
     @Override
     @Transactional
     public void run(String... args) {
@@ -160,11 +189,13 @@ public class DataSeeder implements CommandLineRunner {
             ensureMarrakechPageCardsIfNeeded();
             seedOuzoudWaterfallsIfNeeded();
             seedOurikaValleyIfNeeded();
+            seedMarrakechPalmGroveIfNeeded();
         } else if (recreateMissingDefaultDestinations) {
             seedSaharaDesertIfNeeded();
             ensureMarrakechPageCardsIfNeeded();
             seedOuzoudWaterfallsIfNeeded();
             seedOurikaValleyIfNeeded();
+            seedMarrakechPalmGroveIfNeeded();
         } else {
             System.out.println("Skipping core default destination auto-seed (" + destinationCount
                     + " destination(s) in DB). Set app.seeding.recreate-missing-default-destinations=true to re-create missing Marrakech/Sahara/cards.");
@@ -173,6 +204,7 @@ public class DataSeeder implements CommandLineRunner {
         if (destinationCount > 0 && seedCatalogDayTripDestinations) {
             seedOuzoudWaterfallsIfNeeded();
             seedOurikaValleyIfNeeded();
+            seedMarrakechPalmGroveIfNeeded();
         }
 
         List<Destination> destinations = destinationRepository.findAll();
@@ -244,7 +276,8 @@ public class DataSeeder implements CommandLineRunner {
 
         seedOuzoudMarrakechDayTripActivityIfNeeded();
         seedOurikaValleyActivitiesIfNeeded();
-        
+        seedMarrakechPalmGroveCamelRideActivityIfNeeded();
+
         // Only seed other data if database is empty
         if (userRepository.count() > 0 && bookingRepository.count() == 0) {
             seedBookings();
@@ -261,6 +294,7 @@ public class DataSeeder implements CommandLineRunner {
         if (applyTourInMoroccoReference) {
             applyTourInMoroccoSaharaDestinationPageReference();
             applyTourInMoroccoOuzoudDestinationPageReference();
+            applyTourInMoroccoMarrakechPalmGroveDestinationPageReference();
         }
         
         // Log summary
@@ -780,6 +814,155 @@ public class DataSeeder implements CommandLineRunner {
             activityRepository.save(ad);
             System.out.println("Created Marrakech Day Trip to Ourika Valley activity (Tour in Morocco listing).");
         }
+    }
+
+    /**
+     * Ensures the Marrakech Palm Grove destination exists (Tour in Morocco–style Palmeraie / camel listings).
+     */
+    private void seedMarrakechPalmGroveIfNeeded() {
+        String slug = SlugUtil.generateSlug("Marrakech Palm Grove");
+        Destination palmGrove = destinationRepository.findBySlug(slug).orElse(null);
+
+        if (palmGrove == null) {
+            palmGrove = Destination.builder()
+                    .name("Marrakech Palm Grove")
+                    .slug(slug)
+                    .shortDescription(PALM_GROVE_DESTINATION_SHORT)
+                    .fullDescription(PALM_GROVE_DESTINATION_FULL)
+                    .imageUrl("https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200")
+                    .country("Morocco")
+                    .city("Marrakech")
+                    .featured(true)
+                    .build();
+            destinationRepository.save(palmGrove);
+            System.out.println("Created Marrakech Palm Grove destination");
+        } else {
+            System.out.println("Marrakech Palm Grove destination already exists, preserving existing data");
+        }
+        ensureMarrakechPalmGrovePageCards(palmGrove);
+    }
+
+    private void ensureMarrakechPalmGrovePageCards(Destination destination) {
+        List<DestinationPageCard> existing =
+                destinationPageCardRepository.findByDestinationIdOrderBySortOrderAsc(destination.getId());
+        if (!existing.isEmpty()) {
+            return;
+        }
+
+        DestinationPageCard card1 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(0)
+                .imageUrl("https://images.unsplash.com/photo-1591608971362-6246c5fd30ef?w=1200")
+                .title("Camel Ride Experience in Marrakech")
+                .body(PALM_GROVE_REFERENCE_LISTING_PARAGRAPH)
+                .build();
+        card1.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card1)
+                .languageCode("fr")
+                .title("Balade à dos de chameau à Marrakech")
+                .body("Vivez une balade à dos de chameau à Marrakech — au-delà de la ville rouge vers la Palmeraie et les palmeraies. Idéal si vous n’avez pas le temps du désert : découverte de la culture des oasis et des familles qui y vivent.")
+                .build());
+
+        DestinationPageCard card2 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(1)
+                .imageUrl("https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200")
+                .title("The Palmeraie — Marrakech’s palm oasis")
+                .body("Thousands of date palms spread north of the medina: shady tracks, kasbah-style guesthouses, and views of the High Atlas. Short drives from the centre make this Morocco’s easiest “desert feel” without leaving Marrakech.")
+                .build();
+        card2.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card2)
+                .languageCode("fr")
+                .title("La Palmeraie — l’oasis de Marrakech")
+                .body("Des milliers de palmiers s’étendent au nord de la médina : sentiers ombragés, maisons d’hôtes de style kasbah et vues sur le Haut Atlas. Un court trajet depuis le centre pour une ambiance désert sans quitter Marrakech.")
+                .build());
+
+        DestinationPageCard card3 = DestinationPageCard.builder()
+                .destination(destination)
+                .sortOrder(2)
+                .imageUrl("https://images.unsplash.com/photo-1542401886-65d6c61db217?w=1200")
+                .title("Culture & crafts in the groves")
+                .body("Meet Berber families, taste fresh dates and mint tea, and browse small cooperatives — the Palmeraie blends nature with living heritage on the edge of the red city.")
+                .build();
+        card3.getTranslations().add(DestinationPageCardTranslation.builder()
+                .card(card3)
+                .languageCode("fr")
+                .title("Culture et artisanat dans les palmeraies")
+                .body("Rencontres avec des familles berbères, dattes et thé à la menthe, petites coopératives — la Palmeraie mêle nature et patrimoine vivant aux portes de la ville rouge.")
+                .build());
+
+        destination.getPageCards().add(card1);
+        destination.getPageCards().add(card2);
+        destination.getPageCards().add(card3);
+        destinationRepository.save(destination);
+        System.out.println("Seeded Marrakech Palm Grove destination page cards (highlights)");
+    }
+
+    private void seedMarrakechPalmGroveCamelRideActivityIfNeeded() {
+        String actSlug = SlugUtil.generateSlug("Camel Ride Experience in Marrakech");
+        if (activityRepository.findBySlug(actSlug).isPresent()) {
+            return;
+        }
+        Destination palmGrove = destinationRepository.findBySlug(SlugUtil.generateSlug("Marrakech Palm Grove")).orElse(null);
+        if (palmGrove == null) {
+            return;
+        }
+
+        Activity activity = Activity.builder()
+                .title("Camel Ride Experience in Marrakech")
+                .slug(actSlug)
+                .shortDescription(PALM_GROVE_ACTIVITY_SHORT)
+                .fullDescription(PALM_GROVE_ACTIVITY_FULL)
+                .price(new BigDecimal("45.00"))
+                .premiumPrice(new BigDecimal("69.00"))
+                .budgetPrice(new BigDecimal("45.00"))
+                .duration("Half Day")
+                .location("Marrakech – Palmeraie")
+                .category("Marrakech Day Trips")
+                .tourType(Activity.TourType.SHARED)
+                .difficultyLevel(Activity.DifficultyLevel.EASY)
+                .ratingAverage(new BigDecimal("4.7"))
+                .reviewCount(94)
+                .featured(true)
+                .active(true)
+                .maxGroupSize(14)
+                .availableSlots(55)
+                .imageUrl("https://images.unsplash.com/photo-1591608971362-6246c5fd30ef?w=1200")
+                .galleryImages(new ArrayList<>(Arrays.asList(
+                        "https://images.unsplash.com/photo-1591608971362-6246c5fd30ef?w=1200",
+                        "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200",
+                        "https://images.unsplash.com/photo-1542401886-65d6c61db217?w=1200"
+                )))
+                .availability("Daily")
+                .departureLocation("Marrakech")
+                .returnLocation("Marrakech")
+                .meetingTime("Hotel pick-up in Marrakech (morning or late afternoon — confirm locally)")
+                .whatToExpect(PALM_GROVE_ACTIVITY_SHORT)
+                .includedItems(new ArrayList<>(Arrays.asList(
+                        "Round-trip transport from Marrakech (typical Palmeraie circuits)",
+                        "Camel trek in the palm groves",
+                        "Local guide / camel handlers"
+                )))
+                .excludedItems(new ArrayList<>(Arrays.asList(
+                        "Drinks and snacks unless specified",
+                        "Tips and gratuities",
+                        "Personal expenses"
+                )))
+                .complementaries(new ArrayList<>(Arrays.asList(
+                        "Sunscreen and hat",
+                        "Comfortable closed shoes",
+                        "Camera"
+                )))
+                .itinerary(new ArrayList<>(Arrays.asList(
+                        "Pick-up in Marrakech and short drive to the Palmeraie.",
+                        "Camel ride through palm groves with photo stops and optional tea break.",
+                        "Return transfer to your accommodation in Marrakech."
+                )))
+                .destination(palmGrove)
+                .build();
+
+        activityRepository.save(activity);
+        System.out.println("Created Camel Ride Experience in Marrakech activity (Tour in Morocco listing).");
     }
 
     private void ensureMarrakechPageCardsIfNeeded() {
@@ -2417,6 +2600,29 @@ public class DataSeeder implements CommandLineRunner {
     }
     
     /**
+     * Syncs Marrakech Palm Grove destination + camel activity with copy from
+     * https://www.tour-in-morocco.com/tour-destination/marrakech-palm-grove/
+     */
+    private void applyTourInMoroccoMarrakechPalmGroveDestinationPageReference() {
+        destinationRepository.findBySlug(SlugUtil.generateSlug("Marrakech Palm Grove")).ifPresent(d -> {
+            d.setShortDescription(PALM_GROVE_DESTINATION_SHORT);
+            d.setFullDescription(PALM_GROVE_DESTINATION_FULL);
+            destinationRepository.save(d);
+        });
+
+        String actSlug = SlugUtil.generateSlug("Camel Ride Experience in Marrakech");
+        activityRepository.findBySlug(actSlug).ifPresent(a -> {
+            a.setTitle("Camel Ride Experience in Marrakech");
+            a.setShortDescription(PALM_GROVE_ACTIVITY_SHORT);
+            a.setFullDescription(PALM_GROVE_ACTIVITY_FULL);
+            a.setWhatToExpect(PALM_GROVE_ACTIVITY_SHORT);
+            a.setCategory("Marrakech Day Trips");
+            activityRepository.save(a);
+        });
+        System.out.println("Applied Tour-in-Morocco Marrakech Palm Grove destination / activity reference (where rows exist).");
+    }
+
+    /**
      * Syncs Ouzoud destination + flagship day trip with copy from
      * https://www.tour-in-morocco.com/tour-destination/ouzoud-waterfalls/
      */
@@ -2509,15 +2715,17 @@ public class DataSeeder implements CommandLineRunner {
         Settings settings = Settings.builder()
                 .siteName("Tour Timeless")
                 .logoUrl("https://via.placeholder.com/200x60?text=Tour+Timeless")
-                .contactEmail("info@tourtimeless.com")
-                .contactPhone("+212 6XX XXX XXX")
-                .address("123 Tourism Street, Marrakech, Morocco")
+                .contactEmail("tourinmorocco.contact@gmail.com")
+                .contactPhone("+212 617-771275 | +212 659-915763 | +212 650-509930")
+                .address("Rue Erraouda, 40000 Marrakesh Morocco")
                 .facebookUrl("https://facebook.com/tourtimeless")
                 .instagramUrl("https://instagram.com/tourtimeless")
                 .twitterUrl("https://twitter.com/tourtimeless")
                 .youtubeUrl("https://youtube.com/tourtimeless")
                 .bannerTitle("Discover Morocco's Hidden Gems")
                 .bannerSubtitle("Experience unforgettable adventures in the heart of North Africa")
+                .contactPhonesJson("[{\"display\":\"+212 617-771275\",\"tel\":\"+212617771275\"},{\"display\":\"+212 659-915763\",\"tel\":\"+212659915763\"},{\"display\":\"+212 650-509930\",\"tel\":\"+212650509930\"}]")
+                .businessHours("Mon–Fri: 9:00–18:00 (Morocco time)")
                 .build();
         settingsRepository.save(settings);
     }

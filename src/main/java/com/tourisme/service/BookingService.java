@@ -78,6 +78,7 @@ public class BookingService {
                 .build();
         
         booking = bookingRepository.save(booking);
+        userNotificationService.notifyAdminsNewBooking(booking);
         return bookingMapper.toResponse(booking);
     }
     

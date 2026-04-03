@@ -1,5 +1,6 @@
 package com.tourisme.controller;
 
+import com.tourisme.dto.request.AdminSettingsUpdateRequest;
 import com.tourisme.dto.request.ActivityRequest;
 import com.tourisme.dto.request.ContactMessageReplyRequest;
 import com.tourisme.dto.request.DestinationRequest;
@@ -236,30 +237,23 @@ public class AdminController {
     }
     
     // Settings
+    @GetMapping("/settings/bootstrap")
+    public ResponseEntity<AdminSettingsBootstrapResponse> getSettingsBootstrap() {
+        return ResponseEntity.ok(settingsService.getSettingsBootstrap());
+    }
+
     @GetMapping("/settings")
     public ResponseEntity<SettingsResponse> getSettings(
             @RequestParam(required = false, defaultValue = "en") String lang) {
         return ResponseEntity.ok(settingsService.getSettings(lang));
     }
     
-    @PutMapping("/settings")
-    public ResponseEntity<SettingsResponse> updateSettings(
-            @RequestParam(required = false) String siteName,
-            @RequestParam(required = false) String logoUrl,
-            @RequestParam(required = false) String contactEmail,
-            @RequestParam(required = false) String contactPhone,
-            @RequestParam(required = false) String address,
-            @RequestParam(required = false) String facebookUrl,
-            @RequestParam(required = false) String instagramUrl,
-            @RequestParam(required = false) String twitterUrl,
-            @RequestParam(required = false) String youtubeUrl,
-            @RequestParam(required = false) String bannerTitle,
-            @RequestParam(required = false) String bannerSubtitle,
-            @RequestBody(required = false) java.util.List<com.tourisme.dto.request.SettingsTranslationRequest> translations) {
-        return ResponseEntity.ok(settingsService.updateSettings(
-                siteName, logoUrl, contactEmail, contactPhone, address,
-                facebookUrl, instagramUrl, twitterUrl, youtubeUrl,
-                bannerTitle, bannerSubtitle, translations));
+    @PutMapping(value = "/settings", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<SettingsResponse> updateSettings(@RequestBody AdminSettingsUpdateRequest body) {
+        if (body == null) {
+            body = AdminSettingsUpdateRequest.builder().build();
+        }
+        return ResponseEntity.ok(settingsService.updateSettings(body));
     }
     
     // Dashboard

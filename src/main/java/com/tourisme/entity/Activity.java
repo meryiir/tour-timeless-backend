@@ -149,7 +149,8 @@ public class Activity {
     @Builder.Default
     private List<String> complementaries = new ArrayList<>();
     
-    @Column(length = 500)
+    /** Google Maps embed URLs for routes can exceed several KB. */
+    @Column(columnDefinition = "TEXT")
     private String mapUrl;
     
     @ManyToOne(fetch = FetchType.LAZY)

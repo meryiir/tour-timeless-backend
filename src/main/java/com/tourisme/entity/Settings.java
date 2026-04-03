@@ -55,7 +55,19 @@ public class Settings {
     
     @Column(length = 500)
     private String bannerSubtitle;
-    
+
+    @Column(columnDefinition = "TEXT")
+    private String mapEmbedUrl;
+
+    @Column(columnDefinition = "TEXT")
+    private String contactPhonesJson;
+
+    @Column(columnDefinition = "TEXT")
+    private String businessHours;
+
+    @Column(columnDefinition = "TEXT")
+    private String aboutContentJson;
+
     @OneToMany(mappedBy = "settings", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<SettingsTranslation> translations = new ArrayList<>();

@@ -54,6 +54,40 @@ public class UserNotificationService {
         userNotificationRepository.save(n);
     }
 
+    @Transactional
+    public void notifyAdminContactMessage(User admin, ContactMessage thread) {
+        UserNotification n = UserNotification.builder()
+                .notificationType("CONTACT_MESSAGE")
+                .user(admin)
+                .bookingId(null)
+                .bookingReference(null)
+                .activityTitle(thread.getSubject())
+                .status("CONTACT_MESSAGE")
+                .contactMessageId(thread.getId())
+                .viewed(false)
+                .build();
+        userNotificationRepository.save(n);
+    }
+
+    /** Notifies every active admin that a client submitted a new reservation (pending). */
+    @Transactional
+    public void notifyAdminsNewBooking(Booking booking) {
+        String activityTitle = booking.getActivity() != null ? booking.getActivity().getTitle() : "";
+        userRepository.findByRoleAndActiveIsTrue(User.Role.ROLE_ADMIN).forEach(admin -> {
+            UserNotification n = UserNotification.builder()
+                    .notificationType("NEW_BOOKING")
+                    .user(admin)
+                    .bookingId(booking.getId())
+                    .bookingReference(booking.getBookingReference())
+                    .activityTitle(activityTitle)
+                    .status("NEW_BOOKING")
+                    .contactMessageId(null)
+                    .viewed(false)
+                    .build();
+            userNotificationRepository.save(n);
+        });
+    }
+
     @Transactional(readOnly = true)
     public Page<NotificationResponse> getMyNotifications(Pageable pageable) {
         User user = getCurrentUser();

@@ -38,4 +38,10 @@ public class SettingsTranslation {
     
     @Column(columnDefinition = "TEXT")
     private String address;
+
+    @Column(columnDefinition = "TEXT")
+    private String businessHours;
+
+    @Column(columnDefinition = "TEXT")
+    private String aboutContentJson;
 }
