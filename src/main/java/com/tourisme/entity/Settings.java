@@ -32,7 +32,7 @@ public class Settings {
     @Column(length = 255)
     private String contactEmail;
     
-    @Column(length = 50)
+    @Column(length = 255)
     private String contactPhone;
     
     @Column(columnDefinition = "TEXT")
