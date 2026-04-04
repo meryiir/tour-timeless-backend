@@ -15,10 +15,10 @@ Repositories stay separate: clone **both** next to each other on the server (sib
 ```bash
 cd /opt/tourisme/tour-timeless-backend/deploy
 cp env.example .env
-nano .env   # DB_PASSWORD, JWT_SECRET, SITE_PUBLIC_URL, CORS_ORIGINS (https://your domain), optional GOOGLE_CLIENT_ID
+nano .env   # DB_PASSWORD, JWT_SECRET, SITE_PUBLIC_URL, CORS_ORIGINS, optional GOOGLE_CLIENT_ID
 ```
 
-- `SITE_PUBLIC_URL` and `CORS_ORIGINS` must match your public site URL (no trailing slash on `SITE_PUBLIC_URL` is fine; backend normalizes as needed).
+- Production domain: **morocco-mosaic.com**. Point DNS A/AAAA (and `www` if used) at your VPS; then set `SITE_PUBLIC_URL` (e.g. `https://morocco-mosaic.com`) and `CORS_ORIGINS` to match every origin the browser may use (often apex + `www`, comma-separated).
 - If the frontend repo is **not** a sibling of the backend folder (e.g. monorepo), set `FRONTEND_CONTEXT` in `.env` (see `env.example`).
 
 ## 3. Firewall

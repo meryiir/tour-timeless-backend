@@ -1,12 +1,13 @@
 # Optional: terminate TLS in front of the compose stack (frontend container on port 80).
-# Run Caddy on the host or as another container on the same Docker network.
+# Copy to e.g. /etc/caddy/Caddyfile and adjust upstream if needed.
 #
-# Example when frontend is published as localhost:8080 (set HTTP_PORT=8080 in .env):
-#   reverse_proxy localhost:8080
+# Example when frontend maps to host port 80:
+#   docker compose ...  # HTTP_PORT=80
+#   caddy run --config /etc/caddy/Caddyfile
 #
-# Example when using Docker network `tourisme_default` and container name `tourisme-frontend`:
+# Example upstream when compose project is "deploy" (container name tourisme-frontend):
 #   reverse_proxy tourisme-frontend:80
 
-{$SITE_DOMAIN} {
-    reverse_proxy {$UPSTREAM:localhost:80}
+morocco-mosaic.com, www.morocco-mosaic.com {
+    reverse_proxy localhost:80
 }
