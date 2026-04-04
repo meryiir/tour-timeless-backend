@@ -1,0 +1,75 @@
+# Production stack for a VPS: PostgreSQL + Spring Boot + nginx (SPA).
+#
+# Layout (recommended on the server):
+#   /opt/tourisme/tour-timeless-backend/   ← this repo
+#   /opt/tourisme/tour-timeless/           ← frontend repo (sibling)
+#
+# From tour-timeless-backend/deploy/:
+#   cp env.example .env   # edit secrets and URLs
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+#
+# Monorepo on disk (backend under .../tourisme/backend): set in .env:
+#   FRONTEND_CONTEXT=../../frontend/tour-timeless
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tourisme-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: tourisme
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tourisme"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: tourisme-backend:prod
+    container_name: tourisme-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_URL: jdbc:postgresql://postgres:5432/tourisme
+      DB_USERNAME: postgres
+      DB_PASSWORD: ${DB_PASSWORD}
+      SERVER_PORT: "8081"
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      SITE_PUBLIC_URL: ${SITE_PUBLIC_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      UPLOAD_DIR: /app/uploads
+      PG_DUMP_PATH: /usr/bin/pg_dump
+    volumes:
+      - uploads_data:/app/uploads
+    expose:
+      - "8081"
+
+  frontend:
+    build:
+      context: ${FRONTEND_CONTEXT:-../../tour-timeless}
+      dockerfile: Dockerfile
+      args:
+        VITE_SITE_URL: ${SITE_PUBLIC_URL:-}
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    image: tourisme-frontend:prod
+    container_name: tourisme-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${HTTP_PORT:-80}:80"
+
+volumes:
+  pgdata:
+  uploads_data:

@@ -34,6 +34,10 @@ A complete REST API backend for a tourism platform built with Spring Boot and Po
 - PostgreSQL 12+ (or Docker)
 - IDE (IntelliJ IDEA, Eclipse, or VS Code)
 
+## Deployment (VPS / Docker)
+
+Production stack (PostgreSQL + Spring Boot + nginx static SPA) lives in [`deploy/`](deploy/README.md). Clone this repository next to the frontend repo on the server and use `deploy/docker-compose.prod.yml` with a `.env` file (see `deploy/env.example`).
+
 ## 🔧 Setup Instructions
 
 ### 1. Database Setup
