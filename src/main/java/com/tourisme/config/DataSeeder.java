@@ -2716,7 +2716,7 @@ public class DataSeeder implements CommandLineRunner {
                 .siteName("Tour Timeless")
                 .logoUrl("https://via.placeholder.com/200x60?text=Tour+Timeless")
                 .contactEmail("tourinmorocco.contact@gmail.com")
-                .contactPhone("+212 617-771275 | +212 659-915763 | +212 650-509930")
+                .contactPhone("+212 659-915763 | +212 617-771275 | +212 650-509930")
                 .address("Rue Erraouda, 40000 Marrakesh Morocco")
                 .facebookUrl("https://facebook.com/tourtimeless")
                 .instagramUrl("https://instagram.com/tourtimeless")
@@ -2724,7 +2724,7 @@ public class DataSeeder implements CommandLineRunner {
                 .youtubeUrl("https://youtube.com/tourtimeless")
                 .bannerTitle("Discover Morocco's Hidden Gems")
                 .bannerSubtitle("Experience unforgettable adventures in the heart of North Africa")
-                .contactPhonesJson("[{\"display\":\"+212 617-771275\",\"tel\":\"+212617771275\"},{\"display\":\"+212 659-915763\",\"tel\":\"+212659915763\"},{\"display\":\"+212 650-509930\",\"tel\":\"+212650509930\"}]")
+                .contactPhonesJson("[{\"display\":\"+212 659-915763\",\"tel\":\"+212659915763\"},{\"display\":\"+212 617-771275\",\"tel\":\"+212617771275\"},{\"display\":\"+212 650-509930\",\"tel\":\"+212650509930\"}]")
                 .businessHours("Mon–Fri: 9:00–18:00 (Morocco time)")
                 .build();
         settingsRepository.save(settings);

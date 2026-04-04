@@ -63,4 +63,7 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
 
     @Query("SELECT a.category, COUNT(a) FROM Activity a WHERE a.category IS NOT NULL AND a.category <> '' GROUP BY a.category")
     List<Object[]> countActivitiesGroupedByCategory();
+
+    @Query("SELECT a.slug FROM Activity a WHERE a.active = true ORDER BY a.slug")
+    List<String> findAllActiveSlugs();
 }

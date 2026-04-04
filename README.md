@@ -65,6 +65,10 @@ docker run --name tourisme-postgres \
 1. Create database `tourisme` (or set `DB_URL` to match your DB name).
 2. Update `application.yml` or environment variables if credentials differ from defaults.
 
+#### Restoring from a backup file (`pg_dump` / `latest.dump`)
+
+Use **`docs/restore-database.md`** at the repo root: run `scripts/restore-pg-dump.ps1`, then set **`SEED_RUN_ON_STARTUP=false`** so the Java `DataSeeder` does not run against your restored database.
+
 ### 2. Configuration
 
 The application uses environment variables for configuration. Default values are set in `application.yml`:

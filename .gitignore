@@ -1,4 +1,7 @@
 /target/
+# User-uploaded images (paths stored in DB); keep folder in repo
+uploads/*
+!uploads/.gitkeep
 /.idea/
 *.iml
 .env

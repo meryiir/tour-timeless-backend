@@ -1,0 +1,23 @@
+# Profile: Docker / production-style deploy with an existing PostgreSQL database.
+# - Flyway OFF: restored dumps often have different Flyway checksums than current JAR; use scripts/apply-pending-migrations.ps1 after restore if columns are missing.
+# - Hibernate ddl-auto none.
+# - No DataSeeder runs on startup.
+#
+# Activate with: SPRING_PROFILES_ACTIVE=docker (see docker-compose.yml).
+
+spring:
+  flyway:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: none
+
+app:
+  seeding:
+    run-on-startup: false
+
+logging:
+  level:
+    com.tourisme: INFO
+    org.springframework.security: INFO
+    org.hibernate.SQL: WARN

@@ -59,6 +59,10 @@ app:
   
   upload:
     dir: ${UPLOAD_DIR:uploads}
+
+  # Canonical public site URL for sitemap.xml and robots.txt (no trailing slash). Override in production via SITE_PUBLIC_URL.
+  seo:
+    site-url: ${SITE_PUBLIC_URL:http://localhost:5173}
   
   # Same OAuth 2.0 Client ID as the frontend (VITE_GOOGLE_CLIENT_ID). Used to verify token audience.
   google:
