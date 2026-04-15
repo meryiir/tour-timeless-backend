@@ -25,6 +25,7 @@ public class BookingResponse {
     private BigDecimal totalPrice;
     private BookingStatus status;
     private String specialRequest;
+    private Boolean hidden;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

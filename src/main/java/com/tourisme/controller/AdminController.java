@@ -6,11 +6,13 @@ import com.tourisme.dto.request.ContactMessageReplyRequest;
 import com.tourisme.dto.request.DestinationRequest;
 import com.tourisme.dto.response.*;
 import com.tourisme.entity.Booking;
+import com.tourisme.entity.CustomTripRequest;
 import com.tourisme.service.ActivityService;
 import com.tourisme.service.ContactMessageService;
 import com.tourisme.service.BackupImportService;
 import com.tourisme.service.BackupService;
 import com.tourisme.service.BookingService;
+import com.tourisme.service.CustomTripRequestService;
 import com.tourisme.service.DashboardService;
 import com.tourisme.service.DestinationService;
 import com.tourisme.service.FileStorageService;
@@ -46,6 +48,7 @@ public class AdminController {
     private final DestinationService destinationService;
     private final ActivityService activityService;
     private final BookingService bookingService;
+    private final CustomTripRequestService customTripRequestService;
     private final ReviewService reviewService;
     private final SettingsService settingsService;
     private final DashboardService dashboardService;
@@ -160,8 +163,9 @@ public class AdminController {
     // Bookings
     @GetMapping("/bookings")
     public ResponseEntity<Page<BookingResponse>> getAllBookings(
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        return ResponseEntity.ok(bookingService.getAllBookings(pageable));
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable,
+            @RequestParam(required = false, defaultValue = "false") boolean includeHidden) {
+        return ResponseEntity.ok(bookingService.getAllBookings(pageable, includeHidden));
     }
     
     @GetMapping("/bookings/{id}")
@@ -175,6 +179,13 @@ public class AdminController {
             @RequestParam Booking.BookingStatus status) {
         return ResponseEntity.ok(bookingService.updateBookingStatus(id, status));
     }
+
+    @PatchMapping("/bookings/{id}/hidden")
+    public ResponseEntity<BookingResponse> updateBookingHidden(
+            @PathVariable Long id,
+            @RequestParam boolean hidden) {
+        return ResponseEntity.ok(bookingService.updateBookingHidden(id, hidden));
+    }
     
     @DeleteMapping("/bookings/{id}")
     public ResponseEntity<Void> deleteBooking(@PathVariable Long id) {
@@ -187,6 +198,26 @@ public class AdminController {
             @PathVariable Long id,
             @PageableDefault(size = 20) Pageable pageable) {
         return ResponseEntity.ok(bookingService.getBookingsByUserId(id, pageable));
+    }
+
+    // Custom trip requests (created from homepage form)
+    @GetMapping("/custom-trip-requests")
+    public ResponseEntity<Page<CustomTripRequestResponse>> getCustomTripRequests(
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        return ResponseEntity.ok(customTripRequestService.findAll(pageable));
+    }
+
+    @PatchMapping("/custom-trip-requests/{id}/status")
+    public ResponseEntity<CustomTripRequestResponse> updateCustomTripRequestStatus(
+            @PathVariable Long id,
+            @RequestParam CustomTripRequest.Status status) {
+        return ResponseEntity.ok(customTripRequestService.updateStatus(id, status));
+    }
+
+    @DeleteMapping("/custom-trip-requests/{id}")
+    public ResponseEntity<Void> deleteCustomTripRequest(@PathVariable Long id) {
+        customTripRequestService.delete(id);
+        return ResponseEntity.noContent().build();
     }
     
     // Reviews
@@ -265,6 +296,7 @@ public class AdminController {
     
     /** Full JSON snapshot (passwords redacted). Admin only. */
     @GetMapping("/backup/export")
+    @SuppressWarnings("null")
     public ResponseEntity<byte[]> exportBackup() throws Exception {
         byte[] data = backupService.exportJsonPretty();
         String filename = "tourisme-backup-" + LocalDate.now() + ".json";

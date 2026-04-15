@@ -64,6 +64,7 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/error").permitAll()
+                        .requestMatchers("/robots.txt", "/sitemap.xml").permitAll()
                         .requestMatchers("/api/seo/**").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/destinations/**").permitAll()
@@ -74,6 +75,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/reviews/recent").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/contact/messages").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/newsletter/subscribe").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/custom-trip-requests").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/contact/my-messages").hasAuthority("ROLE_CLIENT")
                         .requestMatchers(HttpMethod.POST, "/api/contact/my-messages/*/message").hasAuthority("ROLE_CLIENT")
                         .requestMatchers("/uploads/**").permitAll()

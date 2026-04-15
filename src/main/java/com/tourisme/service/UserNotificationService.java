@@ -3,6 +3,7 @@ package com.tourisme.service;
 import com.tourisme.dto.response.NotificationResponse;
 import com.tourisme.entity.Booking;
 import com.tourisme.entity.ContactMessage;
+import com.tourisme.entity.CustomTripRequest;
 import com.tourisme.entity.User;
 import com.tourisme.entity.UserNotification;
 import com.tourisme.exception.BadRequestException;
@@ -81,6 +82,25 @@ public class UserNotificationService {
                     .bookingReference(booking.getBookingReference())
                     .activityTitle(activityTitle)
                     .status("NEW_BOOKING")
+                    .contactMessageId(null)
+                    .viewed(false)
+                    .build();
+            userNotificationRepository.save(n);
+        });
+    }
+
+    /** Notifies every active admin that a visitor submitted a custom trip request. */
+    @Transactional
+    public void notifyAdminsCustomTripRequest(CustomTripRequest r) {
+        String title = "Custom trip: " + r.getStartCity() + " → " + r.getDestinationCity();
+        userRepository.findByRoleAndActiveIsTrue(User.Role.ROLE_ADMIN).forEach(admin -> {
+            UserNotification n = UserNotification.builder()
+                    .notificationType("CUSTOM_TRIP_REQUEST")
+                    .user(admin)
+                    .bookingId(null)
+                    .bookingReference(null)
+                    .activityTitle(title)
+                    .status("CUSTOM_TRIP_REQUEST")
                     .contactMessageId(null)
                     .viewed(false)
                     .build();

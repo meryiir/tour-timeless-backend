@@ -251,6 +251,8 @@ public class DataSeeder implements CommandLineRunner {
                 seed3DaysDesertTripFromMarrakechToFes(saharaDesert);
                 seed3DaySaharaDesertTourFromMarrakech(saharaDesert);
                 seed2DayDesertTourFromMarrakech(saharaDesert);
+                seed12DaysInMoroccoIncludingChefchaouenIfNeeded();
+                seed7DaysTourCasablancaToMarrakechIfNeeded();
                 System.out.println("Finished seeding activities. New count: " + activityRepository.count());
             }
         } else {
@@ -268,6 +270,8 @@ public class DataSeeder implements CommandLineRunner {
             seed3DaySaharaDesertTourFromMarrakechIfNeeded();
             // Ensure 2 Day Desert Tour from Marrakech exists
             seed2DayDesertTourFromMarrakechIfNeeded();
+            seed12DaysInMoroccoIncludingChefchaouenIfNeeded();
+            seed7DaysTourCasablancaToMarrakechIfNeeded();
             if (reactivateAllActivities) {
                 System.out.println("Re-activating inactive activities (app.seeding.reactivate-all-activities=true)...");
                 ensureAllActivitiesAreActive();
@@ -1230,10 +1234,10 @@ public class DataSeeder implements CommandLineRunner {
                             "Day 3: Ouarzazate - Kasbah Ait Benhaddou - High Atlas - Marrakech. Breakfast at your Hotel or Riad in Ouarzazate, then, we will start a new journey of our Tour from Fes to Marrakech, our first stop for today is to visit the city's famous kasbah, including that of Taourirt marked as world heritage by Unesco and one of the beautiful palaces in the area. Not far from the city Ouarzazate Kasbah we will stop to visit the museum of movies and cinema studios, where many international movies are shot, like: (Gladiator, Lawrence d'Arabie, Games of the throne, the Babel…). 20 km later we will turn right to visit the famous kasbah of Ait Ben Haddou, after the visit we will continue crossing the high Atlas Mountains and its dramatic landscapes and the hidden Berber villages settled in the foothills of the massive valleys. (optional: we can have lunch in a local restaurant in the Tichka pass) else, we will continue to Marrakech if you want to use your left time visiting the amazing Majorelle gardens."
                     )))
                     .availableDates(new ArrayList<>(Arrays.asList(
-                            LocalDate.now().plusDays(3),
                             LocalDate.now().plusDays(7),
                             LocalDate.now().plusDays(10),
-                            LocalDate.now().plusDays(14)
+                            LocalDate.now().plusDays(14),
+                            LocalDate.now().plusDays(21)
                     )))
                     .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
                     .destination(saharaDesert)
@@ -1346,6 +1350,259 @@ public class DataSeeder implements CommandLineRunner {
         activityRepository.saveAll(Arrays.asList(relatedActivity1, relatedActivity2));
         System.out.println("Created 2 additional Sahara Desert activities");
     }
+
+    /**
+     * Grand Morocco circuit aligned with the itinerary described on Roaming Camels Morocco
+     * (12 Days in Morocco — including Chefchaouen). Pinned first in listings via {@link Activity#getDisplayOrder()}.
+     */
+    private void seed12DaysInMoroccoIncludingChefchaouenIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream()
+                .filter(d -> "Sahara Desert".equals(d.getName()))
+                .findFirst()
+                .orElse(null);
+        if (saharaDesert == null) {
+            System.out.println("Skipping 12-day Morocco tour seed: Sahara Desert destination missing.");
+            return;
+        }
+
+        final String slug = "12-days-in-morocco-including-chefchaouen";
+        final String title = "12 Days in Morocco (Including Chefchaouen)";
+        final String shortDescription =
+                "Casablanca · Chefchaouen · Fes · Sahara Desert · Todgha Gorge · Ait Ben Haddou · Essaouira · Marrakech — "
+                        + "an extended private circuit with daily breakfast and key dinners in the Sahara, Todgha Gorge, and Ait Ben Haddou.";
+        final String fullDescription = """
+                Morocco travel is one of our favorite past times. Come along with us on this magical discovery of all that Morocco has to offer.
+
+                Start your trip in Casablanca and visit Chefchaouen, the famous Blue City nestled into the Rif Mountains in the north before exploring the famous medina of Fes. Then it is on to the Sahara Desert and your dream come true on the back of a camel. Tour Morocco’s southern region and head to Marrakech where you will end the trip with the sights, sounds, and smell of exotic spices and snail soup in Jemaa el-Fnaa.""";
+
+        final String whatToExpect = """
+                Extended private tour — starts from Casablanca Airport. 12 days on the road with a comfortable air-conditioned vehicle, English-speaking driver (national guide when the group is over 4 people), and local city guides as needed.
+
+                Meals: daily breakfast; dinners included in the Sahara, at Todgha Gorge, and at Ait Ben Haddou Kasbah (as per itinerary). Lunches, beverages, and most other dinners are on your own unless noted.
+
+                Highlights include Rabat and the road north to Chefchaouen, two days in Fes with a full medina day, camel trek and desert camp in Merzouga, Todgha Gorge, Dades and Roses Valley, Ait Ben Haddou, the Atlantic port town of Essaouira, and two days in Marrakech before returning to Casablanca for departure.
+
+                Optional add-ons you can request: cooking class, Marrakech food tour, hammam bookings, specialized guides, and extra touring on request.""";
+
+        List<String> itinerary = new ArrayList<>(Arrays.asList(
+                "Day 1: Casablanca — Arrive in Casablanca. Rest after your flight and visit the Hassan II Mosque (note: mosque interior visits have specific visitor rules and may not mirror every public tour page).",
+                "Day 2: Chefchaouen — Drive north via Rabat for a highlights visit (Hassan Tower & Mausoleum area, Kasbah of the Oudayas and its gardens). Continue into the Rif Mountains to Chefchaouen.",
+                "Day 3: Fes — Morning in Chefchaouen’s medina, then travel to Fes and settle into the ancient imperial city.",
+                "Day 4: Fes — Full day with a local guide: Royal Palace gates, Mellah, medina lanes, artisan workshops (weavers, ceramics, brass), and the famous tanneries (UNESCO-related heritage). Lunch along the way.",
+                "Day 5: Sahara Desert — Cross the Middle Atlas through Ifrane and cedar forests (Barbary macaques), via Midelt toward the Ziz Valley and Merzouga. Camel trek to camp; dinner under the stars (4x4 transfer optional instead of camels).",
+                "Day 6: Todgha Gorge — Return from the dunes, travel via Erfoud and the Valley of Kasbahs toward Todgha Gorge; time along the dramatic canyon walls. Overnight in the valley (e.g. traditional guesthouse style).",
+                "Day 7: Ait Ben Haddou Kasbah — Dades Gorge, Roses Valley, Ouarzazate, and the ksar of Ait Ben Haddou with a walk through the village. Dinner included at the kasbah stay.",
+                "Day 8: Essaouira — Head west to Essaouira: medina of artists and musicians, working fishing port, long beach walks, and sunset over the Atlantic.",
+                "Day 9: Marrakech — Drive to Marrakech; optional argan cooperative stop. Evening in Jemaa el-Fnaa — juice stalls, food stalls, and the square’s nightly theatre.",
+                "Day 10: Marrakech — Guided half-day: Koutoubia surrounds, Bahia Palace, Saadian Tombs, Mellah; free time for souks, Majorelle Garden, or a hammam.",
+                "Day 11: Casablanca — Flexible transfer to Casablanca — leave early or add last Marrakech sights with your driver.",
+                "Day 12: Departure — Depart from Casablanca (airport transfer as arranged)."
+        ));
+
+        List<String> included = new ArrayList<>(Arrays.asList(
+                "Airport transfers",
+                "Local guides as needed",
+                "Daily breakfast",
+                "Some dinners (Sahara camp, Todgha Gorge area, Ait Ben Haddou per itinerary)",
+                "Admission to historic monuments as listed in the itinerary (exceptions: Jardin Majorelle and Hassan II Mosque may require direct tickets)",
+                "Comfortable air-conditioned vehicle",
+                "All accommodations",
+                "Camel trek in the desert",
+                "English-speaking driver or national guide (over 4 people)"
+        ));
+
+        List<String> excluded = new ArrayList<>(Arrays.asList(
+                "Airfare",
+                "Lunch",
+                "Discretionary gratuities (driver, guides, servers)",
+                "Travel insurance",
+                "Dinner unless otherwise indicated",
+                "Beverages"
+        ));
+
+        List<String> complementaries = new ArrayList<>(Arrays.asList(
+                "Cooking class (on request)",
+                "Food tour — Marrakech (on request)",
+                "Additional tours on request",
+                "Specialized guides (on request)",
+                "Hammam bookings (on request)"
+        ));
+
+        Optional<Activity> existing = activityRepository.findBySlug(slug);
+        Activity activity;
+        if (existing.isPresent()) {
+            activity = existing.get();
+        } else {
+            activity = Activity.builder().slug(slug).build();
+        }
+
+        activity.setTitle(title);
+        activity.setShortDescription(shortDescription);
+        activity.setFullDescription(fullDescription);
+        activity.setWhatToExpect(whatToExpect);
+        activity.setPrice(new BigDecimal("2499.00"));
+        activity.setPremiumPrice(new BigDecimal("3199.00"));
+        activity.setBudgetPrice(new BigDecimal("2199.00"));
+        activity.setDuration("12 Days");
+        activity.setLocation("Casablanca - Chefchaouen - Essaouira - Fes - Marrakech - Sahara Desert");
+        activity.setCategory("Extended Tour");
+        activity.setDifficultyLevel(Activity.DifficultyLevel.MODERATE);
+        activity.setTourType(Activity.TourType.PRIVATE);
+        activity.setRatingAverage(new BigDecimal("4.9"));
+        activity.setReviewCount(24);
+        activity.setFeatured(true);
+        activity.setDisplayOrder(0);
+        activity.setActive(true);
+        activity.setMaxGroupSize(12);
+        activity.setAvailableSlots(24);
+        activity.setImageUrl("https://images.unsplash.com/photo-1569383746724-4f2c9b14e68b?w=1200");
+        activity.setGalleryImages(new ArrayList<>(Arrays.asList(
+                "https://images.unsplash.com/photo-1569383746724-4f2c9b14e68b?w=1200",
+                "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                "https://images.unsplash.com/photo-1489749798305-4fea3ae63d43?w=1200",
+                "https://images.unsplash.com/photo-1539025638867-da25744e7a1e?w=1200"
+        )));
+        activity.setAvailability("On request — private departures");
+        activity.setDepartureLocation("Casablanca Airport");
+        activity.setReturnLocation("Casablanca Airport");
+        activity.setMeetingTime("Meet your driver at Casablanca Airport or your Casablanca hotel — time confirmed before travel");
+        activity.setIncludedItems(included);
+        activity.setExcludedItems(excluded);
+        activity.setComplementaries(complementaries);
+        activity.setItinerary(itinerary);
+        activity.setDestination(saharaDesert);
+        activity.setMapUrl("https://www.google.com/maps/search/Morocco");
+        activity.setAvailableDates(new ArrayList<>(Arrays.asList(
+                LocalDate.now().plusDays(14),
+                LocalDate.now().plusDays(30),
+                LocalDate.now().plusDays(45)
+        )));
+
+        activityRepository.save(activity);
+        System.out.println("Seeded / updated activity: " + title + " (" + slug + ")");
+    }
+
+    /**
+     * Extended one-week circuit aligned with Roaming Camels Morocco:
+     * https://roamingcamelsmorocco.com/tours/7-days-tour-casablanca-to-marrakech/
+     */
+    private void seed7DaysTourCasablancaToMarrakechIfNeeded() {
+        List<Destination> destinations = destinationRepository.findAll();
+        Destination saharaDesert = destinations.stream()
+                .filter(d -> "Sahara Desert".equals(d.getName()))
+                .findFirst()
+                .orElse(null);
+        if (saharaDesert == null) {
+            System.out.println("Skipping 7-day Casablanca→Marrakech tour seed: Sahara Desert destination missing.");
+            return;
+        }
+
+        final String slug = "7-days-tour-casablanca-to-marrakech";
+        final String title = "7 Days Tour- Casablanca to Marrakech";
+        final String shortDescription =
+                "Casablanca · Rabat · Meknes · Volubilis · Fes · Sahara Desert · Dades Valley · Ait Ben Haddou · Marrakech — "
+                        + "a one-week private tour with daily breakfast and (2) dinners in the Sahara and Dades Valley.";
+        final String fullDescription = """
+                Do you have 7 days and 6 nights to spare? This one-week Morocco tour covers the highlights efficiently — cities, countryside, desert landscapes, and oasis stops — with door-to-door service from arrival to departure.
+
+                Visit the key city sights in Casablanca and Rabat, explore Meknes and the Roman ruins at Volubilis, then enjoy a private guided day in Fes’ ancient medina. Continue through the Middle Atlas toward the Sahara for a camel trek and desert camp experience, then travel via the valleys and kasbahs (including Ait Ben Haddou) before ending in vibrant Marrakech.""";
+
+        final String whatToExpect = """
+                Starts at Casablanca Airport. Private car and driver, accommodations pre-booked with your approval, and local guides arranged as needed.
+
+                Meals: daily breakfast; two dinners included (Sahara & Dades Valley). Lunches, beverages, and other dinners are on your own unless noted.
+
+                Highlights include Casablanca & Rabat, Meknes and Volubilis, a private Fes medina tour, Middle Atlas landscapes (Ifrane, cedar forests), Sahara dunes with camel trek and camp, Dades Valley, Ait Ben Haddou, and Marrakech (including an evening in Jemaa el-Fnaa).""";
+
+        List<String> itinerary = new ArrayList<>(Arrays.asList(
+                "Day 1: Arrive in Casablanca — Airport pick-up, transfer to your accommodation. Visit Hassan II Mosque exterior (or interior tour, time permitting).",
+                "Day 2: Rabat → Fes — Drive from Casablanca to Rabat for a city tour (Hassan Tower, Chellah, medina, Kasbah of the Oudayas, and nearby Sale). Continue toward Fes.",
+                "Day 3: Fes — Private city tour with a local guide through the old medina’s narrow alleys, artisan quarters, and historic sites.",
+                "Day 4: Sahara Desert — Stop in Ifrane, cross the Middle Atlas and cedar forests (Barbary macaques), lunch in Midelt, scenic drive along Ziz Valley, then reach the dunes for your desert night.",
+                "Day 5: Dades Valley — Sunrise on the dunes, camel trek back for breakfast and shower, then continue south toward the valleys and gorges en route to Dades Valley.",
+                "Day 6: Ait Ben Haddou → Marrakech — Explore Ait Ben Haddou, cross the High Atlas via Tizi n’ Tichka, arrive in Marrakech and enjoy an evening in Jemaa el-Fnaa.",
+                "Day 7: Departure — Depart from Marrakech, or transfer back to Casablanca (CMN) if your flight requires it."
+        ));
+
+        List<String> included = new ArrayList<>(Arrays.asList(
+                "Airport transfers",
+                "Local guides as needed",
+                "Daily breakfast",
+                "Some dinners (2: Sahara & Dades Valley)",
+                "Admission to historic monuments as listed (exceptions: Jardin Majorelle and Hassan II Mosque)",
+                "Comfortable air-conditioned vehicle",
+                "All accommodations",
+                "Camel trek in the desert",
+                "English-speaking driver or national guide (over 4 people)"
+        ));
+
+        List<String> excluded = new ArrayList<>(Arrays.asList(
+                "Airfare",
+                "Lunch",
+                "Discretionary gratuities (driver/guide, city guides, servers)",
+                "Travel insurance",
+                "Dinner unless otherwise indicated",
+                "Beverages"
+        ));
+
+        List<String> complementaries = new ArrayList<>(Arrays.asList(
+                "Cooking class (on request)",
+                "Food tour (Marrakech)",
+                "Additional tours on request",
+                "Specialized guides",
+                "Hammam bookings"
+        ));
+
+        Optional<Activity> existing = activityRepository.findBySlug(slug);
+        Activity activity = existing.orElseGet(() -> Activity.builder().slug(slug).build());
+
+        activity.setTitle(title);
+        activity.setShortDescription(shortDescription);
+        activity.setFullDescription(fullDescription);
+        activity.setWhatToExpect(whatToExpect);
+        activity.setPrice(new BigDecimal("1599.00"));
+        activity.setPremiumPrice(new BigDecimal("2099.00"));
+        activity.setBudgetPrice(new BigDecimal("1399.00"));
+        activity.setDuration("7 Days");
+        activity.setLocation("Casablanca-Fes-Marrakech-Sahara Desert");
+        activity.setCategory("Extended Tour");
+        activity.setDifficultyLevel(Activity.DifficultyLevel.MODERATE);
+        activity.setTourType(Activity.TourType.PRIVATE);
+        activity.setRatingAverage(new BigDecimal("4.9"));
+        activity.setReviewCount(18);
+        activity.setFeatured(true);
+        activity.setDisplayOrder(1);
+        activity.setActive(true);
+        activity.setMaxGroupSize(12);
+        activity.setAvailableSlots(24);
+        activity.setImageUrl("https://images.unsplash.com/photo-1489749798305-4fea3ae63d43?w=1200");
+        activity.setGalleryImages(new ArrayList<>(Arrays.asList(
+                "https://images.unsplash.com/photo-1489749798305-4fea3ae63d43?w=1200",
+                "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
+                "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
+                "https://images.unsplash.com/photo-1569383746724-4f2c9b14e68b?w=1200"
+        )));
+        activity.setAvailability("On request — private departures");
+        activity.setDepartureLocation("Casablanca Airport");
+        activity.setReturnLocation("Marrakech (or Casablanca Airport)");
+        activity.setMeetingTime("Meet your driver at Casablanca Airport or your Casablanca hotel — time confirmed before travel");
+        activity.setIncludedItems(included);
+        activity.setExcludedItems(excluded);
+        activity.setComplementaries(complementaries);
+        activity.setItinerary(itinerary);
+        activity.setDestination(saharaDesert);
+        activity.setMapUrl("https://www.google.com/maps/search/Casablanca+to+Marrakech+Morocco");
+        activity.setAvailableDates(new ArrayList<>(Arrays.asList(
+                LocalDate.now().plusDays(10),
+                LocalDate.now().plusDays(21),
+                LocalDate.now().plusDays(35)
+        )));
+
+        activityRepository.save(activity);
+        System.out.println("Seeded / updated activity: " + title + " (" + slug + ")");
+    }
     
     private void seed4DaysTourIfNeeded() {
         List<Destination> destinations = destinationRepository.findAll();
@@ -1442,12 +1699,12 @@ public class DataSeeder implements CommandLineRunner {
                             "Day 4: Ouarzazate - Kasbah Ait Benhaddou - High Atlas - Marrakech. Breakfast at your Hotel or Riad in Ouarzazate, then, we will start a new journey of our Tour from Fes to Marrakech, our first stop for today is to visit the city's famous kasbah, including that of Taourirt marked as world heritage by Unesco and one of the beautiful palaces in the area. Not far from the city Ouarzazate Kasbah we will stop to visit the museum of movies and cinema studios, where many international movies are shot, like: (Gladiator, Lawrence d'Arabie, Games of the throne, the Babel…). 20 km later we will turn right to visit the famous kasbah of Ait Ben Haddou, after the visit we will continue crossing the high Atlas Mountains and its dramatic landscapes and the hidden Berber villages settled in the foothills of the massive valleys. (optional: we can have lunch in a local restaurant in the Tichka pass) else, we will continue to Marrakech if you want to use your left time visiting the amazing Majorelle gardens."
                     )))
                     .availableDates(new ArrayList<>(Arrays.asList(
-                            LocalDate.now().plusDays(3),
                             LocalDate.now().plusDays(7),
                             LocalDate.now().plusDays(10),
                             LocalDate.now().plusDays(14),
-                            LocalDate.now().plusDays(17),
-                            LocalDate.now().plusDays(21)
+                            LocalDate.now().plusDays(21),
+                            LocalDate.now().plusDays(28),
+                            LocalDate.now().plusDays(35)
                     )))
                     .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
                     .destination(saharaDesert)
@@ -1665,16 +1922,16 @@ public class DataSeeder implements CommandLineRunner {
                             "Day 4: ZAGORA - OUARZAZATE - MARRAKECH. After breakfast, you will have enough time to visit Tamegroute and its old Koran library and subterranean Kasbah. After the visit, we will return through the Draa- river valley to Quarzazate (stop for lunch). The journey will end in Marrakech with a scenic drive via the High Atlas Mountains."
                     )))
                     .availableDates(new ArrayList<>(Arrays.asList(
-                            LocalDate.now().plusDays(1),
-                            LocalDate.now().plusDays(2),
-                            LocalDate.now().plusDays(3),
-                            LocalDate.now().plusDays(4),
-                            LocalDate.now().plusDays(5),
-                            LocalDate.now().plusDays(6),
                             LocalDate.now().plusDays(7),
-                            LocalDate.now().plusDays(8),
-                            LocalDate.now().plusDays(9),
-                            LocalDate.now().plusDays(10)
+                            LocalDate.now().plusDays(10),
+                            LocalDate.now().plusDays(14),
+                            LocalDate.now().plusDays(17),
+                            LocalDate.now().plusDays(21),
+                            LocalDate.now().plusDays(24),
+                            LocalDate.now().plusDays(28),
+                            LocalDate.now().plusDays(31),
+                            LocalDate.now().plusDays(35),
+                            LocalDate.now().plusDays(42)
                     )))
                     .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
                     .destination(saharaDesert)
@@ -1891,16 +2148,16 @@ public class DataSeeder implements CommandLineRunner {
                             "Day 3: MERZOUGA - ZIZ VALLEY - CEDAR FOREST - IFRANE - FES. Wake up early before sunrise to enjoy the sunrise from the Great Dune of the Sahara Desert. Return to the hotel in dromedaries or in 4WD to meet your driver to start a new journey to Fez, which is considered to be Morocco's cultural and spiritual center with a massive history that goes right back to the 9th century. This city comprises many beautifully preserved historical buildings, including mosques, palaces, and fountains all fixed in a maze of narrow streets and passages which are interesting to explore. We will drive through the great palm grove of Ziz valley, and Errachidia, then, continues through the middle atlas mountains to reach the city of Midelt, where we will have a stop for lunch. After lunch we will head towards the cedar forest in Azrou, there, we will stop to meet the wild Barbary apes (macaque) and then continue to Ifrane, referred to as the small Switzerland of Morocco, we will stop for cafe and explore the beautiful town before driving to Fes via the green hills of the Middle Atlas. We will arrive at Fes around 6 pm in the afternoon."
                     )))
                     .availableDates(new ArrayList<>(Arrays.asList(
-                            LocalDate.now().plusDays(1),
-                            LocalDate.now().plusDays(2),
-                            LocalDate.now().plusDays(3),
-                            LocalDate.now().plusDays(4),
-                            LocalDate.now().plusDays(5),
-                            LocalDate.now().plusDays(6),
                             LocalDate.now().plusDays(7),
-                            LocalDate.now().plusDays(8),
-                            LocalDate.now().plusDays(9),
-                            LocalDate.now().plusDays(10)
+                            LocalDate.now().plusDays(10),
+                            LocalDate.now().plusDays(14),
+                            LocalDate.now().plusDays(17),
+                            LocalDate.now().plusDays(21),
+                            LocalDate.now().plusDays(24),
+                            LocalDate.now().plusDays(28),
+                            LocalDate.now().plusDays(31),
+                            LocalDate.now().plusDays(35),
+                            LocalDate.now().plusDays(42)
                     )))
                     .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
                     .destination(saharaDesert)
@@ -2123,16 +2380,16 @@ public class DataSeeder implements CommandLineRunner {
                             "Day 3: Merzouga - High Atlas Mountains - Marrakech. Wake up early to watch the sunrise over the dunes. After breakfast, return to Merzouga by camel or 4WD. Begin the journey back to Marrakech, crossing the High Atlas Mountains again. Enjoy scenic views and photo stops along the way. Arrive in Marrakech in the late afternoon, where you'll be dropped off at your accommodation."
                     )))
                     .availableDates(new ArrayList<>(Arrays.asList(
-                            LocalDate.now().plusDays(1),
-                            LocalDate.now().plusDays(2),
-                            LocalDate.now().plusDays(3),
-                            LocalDate.now().plusDays(4),
-                            LocalDate.now().plusDays(5),
-                            LocalDate.now().plusDays(6),
                             LocalDate.now().plusDays(7),
-                            LocalDate.now().plusDays(8),
-                            LocalDate.now().plusDays(9),
-                            LocalDate.now().plusDays(10)
+                            LocalDate.now().plusDays(10),
+                            LocalDate.now().plusDays(14),
+                            LocalDate.now().plusDays(17),
+                            LocalDate.now().plusDays(21),
+                            LocalDate.now().plusDays(24),
+                            LocalDate.now().plusDays(28),
+                            LocalDate.now().plusDays(31),
+                            LocalDate.now().plusDays(35),
+                            LocalDate.now().plusDays(42)
                     )))
                     .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
                     .destination(saharaDesert)
@@ -2269,7 +2526,7 @@ public class DataSeeder implements CommandLineRunner {
                         .user(users.get(0))
                         .activity(activities.get(0))
                         .bookingDate(LocalDate.now().minusDays(5))
-                        .travelDate(LocalDate.now().plusDays(5))
+                        .travelDate(LocalDate.now().plusDays(10))
                         .numberOfPeople(2)
                         .totalPrice(activities.get(0).getPrice().multiply(new BigDecimal("2")))
                         .status(Booking.BookingStatus.CONFIRMED)
@@ -2280,7 +2537,7 @@ public class DataSeeder implements CommandLineRunner {
                         .user(users.get(1))
                         .activity(activities.get(0))
                         .bookingDate(LocalDate.now().minusDays(3))
-                        .travelDate(LocalDate.now().plusDays(1))
+                        .travelDate(LocalDate.now().plusDays(7))
                         .numberOfPeople(1)
                         .totalPrice(activities.get(0).getPrice())
                         .status(Booking.BookingStatus.PENDING)
@@ -2290,7 +2547,7 @@ public class DataSeeder implements CommandLineRunner {
                         .user(users.get(2))
                         .activity(activities.get(0))
                         .bookingDate(LocalDate.now().minusDays(10))
-                        .travelDate(LocalDate.now().plusDays(7))
+                        .travelDate(LocalDate.now().plusDays(14))
                         .numberOfPeople(4)
                         .totalPrice(activities.get(0).getPrice().multiply(new BigDecimal("4")))
                         .status(Booking.BookingStatus.CONFIRMED)
@@ -2466,16 +2723,16 @@ public class DataSeeder implements CommandLineRunner {
                             "Day 2: Zagora - Agdz - Kasbah Taourirte - Marrakech\n\nEarly wake up to enjoy a beautiful sunrise over the green palm grove of Draa valley, then, ride camels back to the hotel where you will meet your driver/guide to start a new day back to Marrakech. Today, you will explore the Draa valley and our first stop will be in the KAsbah Tamnougalte in the village of Agdz, after the visit to the kasbah we will head to Ouarzazate where we will stop again to visit the cinema museum and the old house of the Pasha El Glaoui, the kasbah Taourirte is a world heritage kasbah by UNESCO. After lunch in Ouarzazat, we will drive back to Marrakech through the High Atlas Mountains and the Tichka pass. Arrive in Marrakech around 6 PM drop off at your hotel and end of our 2 Days Sahara desert tour."
                     )))
                     .availableDates(new ArrayList<>(Arrays.asList(
-                            LocalDate.now().plusDays(1),
-                            LocalDate.now().plusDays(2),
-                            LocalDate.now().plusDays(3),
-                            LocalDate.now().plusDays(4),
-                            LocalDate.now().plusDays(5),
-                            LocalDate.now().plusDays(6),
                             LocalDate.now().plusDays(7),
-                            LocalDate.now().plusDays(8),
-                            LocalDate.now().plusDays(9),
-                            LocalDate.now().plusDays(10)
+                            LocalDate.now().plusDays(10),
+                            LocalDate.now().plusDays(14),
+                            LocalDate.now().plusDays(17),
+                            LocalDate.now().plusDays(21),
+                            LocalDate.now().plusDays(24),
+                            LocalDate.now().plusDays(28),
+                            LocalDate.now().plusDays(31),
+                            LocalDate.now().plusDays(35),
+                            LocalDate.now().plusDays(42)
                     )))
                     .mapUrl("https://maps.app.goo.gl/P4Lbh74jSGAyvYch7")
                     .destination(saharaDesert)
@@ -2716,7 +2973,7 @@ public class DataSeeder implements CommandLineRunner {
                 .siteName("Tour Timeless")
                 .logoUrl("https://via.placeholder.com/200x60?text=Tour+Timeless")
                 .contactEmail("tourinmorocco.contact@gmail.com")
-                .contactPhone("+212 659-915763 | +212 617-771275 | +212 650-509930")
+                .contactPhone("0661053623 | 0659915763 | 0524301729")
                 .address("Rue Erraouda, 40000 Marrakesh Morocco")
                 .facebookUrl("https://facebook.com/tourtimeless")
                 .instagramUrl("https://instagram.com/tourtimeless")
@@ -2724,7 +2981,7 @@ public class DataSeeder implements CommandLineRunner {
                 .youtubeUrl("https://youtube.com/tourtimeless")
                 .bannerTitle("Discover Morocco's Hidden Gems")
                 .bannerSubtitle("Experience unforgettable adventures in the heart of North Africa")
-                .contactPhonesJson("[{\"display\":\"+212 659-915763\",\"tel\":\"+212659915763\"},{\"display\":\"+212 617-771275\",\"tel\":\"+212617771275\"},{\"display\":\"+212 650-509930\",\"tel\":\"+212650509930\"}]")
+                .contactPhonesJson("[{\"display\":\"0661053623\",\"tel\":\"+212661053623\"},{\"display\":\"0659915763\",\"tel\":\"+212659915763\"},{\"display\":\"0524301729\",\"tel\":\"+212524301729\"}]")
                 .businessHours("Mon–Fri: 9:00–18:00 (Morocco time)")
                 .build();
         settingsRepository.save(settings);

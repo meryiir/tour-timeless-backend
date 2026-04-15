@@ -34,24 +34,25 @@ public class SeoController {
     public String sitemap() {
         String base = siteUrl.replaceAll("/$", "");
         String lastmod = W3C_DT.format(Instant.now());
+        String[] langs = new String[] {"en", "fr", "es", "de"};
 
         List<String> chunks = new ArrayList<>();
-        appendUrl(chunks, base, "/", lastmod, "1.0");
-        appendUrl(chunks, base, "/activities", lastmod, "0.9");
-        appendUrl(chunks, base, "/destinations", lastmod, "0.9");
-        appendUrl(chunks, base, "/about", lastmod, "0.7");
-        appendUrl(chunks, base, "/contact", lastmod, "0.7");
-        appendUrl(chunks, base, "/privacy", lastmod, "0.3");
-        appendUrl(chunks, base, "/terms", lastmod, "0.3");
+        appendLangUrls(chunks, base, "/", lastmod, "1.0", langs);
+        appendLangUrls(chunks, base, "/activities", lastmod, "0.9", langs);
+        appendLangUrls(chunks, base, "/destinations", lastmod, "0.9", langs);
+        appendLangUrls(chunks, base, "/about", lastmod, "0.7", langs);
+        appendLangUrls(chunks, base, "/contact", lastmod, "0.7", langs);
+        appendLangUrls(chunks, base, "/privacy", lastmod, "0.3", langs);
+        appendLangUrls(chunks, base, "/terms", lastmod, "0.3", langs);
 
         for (String slug : activityRepository.findAllActiveSlugs()) {
             if (slug != null && !slug.isBlank()) {
-                appendUrl(chunks, base, "/activities/" + slug.trim(), lastmod, "0.8");
+                appendLangUrls(chunks, base, "/activities/" + slug.trim(), lastmod, "0.8", langs);
             }
         }
         for (String slug : destinationRepository.findAllSlugs()) {
             if (slug != null && !slug.isBlank()) {
-                appendUrl(chunks, base, "/destinations/" + slug.trim(), lastmod, "0.8");
+                appendLangUrls(chunks, base, "/destinations/" + slug.trim(), lastmod, "0.8", langs);
             }
         }
 
@@ -65,14 +66,23 @@ public class SeoController {
         return xml.toString();
     }
 
-    private static void appendUrl(List<String> out, String base, String path, String lastmod, String priority) {
-        String loc = base + path;
-        out.add("  <url>\n"
-                + "    <loc>" + xmlEscape(loc) + "</loc>\n"
-                + "    <lastmod>" + lastmod + "</lastmod>\n"
-                + "    <changefreq>weekly</changefreq>\n"
-                + "    <priority>" + priority + "</priority>\n"
-                + "  </url>\n");
+    private static void appendLangUrls(
+            List<String> out,
+            String base,
+            String path,
+            String lastmod,
+            String priority,
+            String[] langs
+    ) {
+        for (String lang : langs) {
+            String loc = base + path + (path.contains("?") ? "&" : "?") + "lang=" + lang;
+            out.add("  <url>\n"
+                    + "    <loc>" + xmlEscape(loc) + "</loc>\n"
+                    + "    <lastmod>" + lastmod + "</lastmod>\n"
+                    + "    <changefreq>weekly</changefreq>\n"
+                    + "    <priority>" + priority + "</priority>\n"
+                    + "  </url>\n");
+        }
     }
 
     private static String xmlEscape(String s) {

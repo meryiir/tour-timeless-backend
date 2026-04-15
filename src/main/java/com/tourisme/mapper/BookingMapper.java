@@ -28,6 +28,7 @@ public class BookingMapper {
                 .totalPrice(booking.getTotalPrice())
                 .status(booking.getStatus())
                 .specialRequest(booking.getSpecialRequest())
+                .hidden(Boolean.TRUE.equals(booking.getHidden()))
                 .createdAt(booking.getCreatedAt())
                 .updatedAt(booking.getUpdatedAt())
                 .build();

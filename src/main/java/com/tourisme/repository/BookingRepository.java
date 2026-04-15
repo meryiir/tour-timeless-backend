@@ -20,6 +20,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     boolean existsByBookingReference(String bookingReference);
     Page<Booking> findByUserId(Long userId, Pageable pageable);
     Page<Booking> findByStatus(BookingStatus status, Pageable pageable);
+    Page<Booking> findByHiddenFalse(Pageable pageable);
 
     @Query("SELECT COALESCE(SUM(b.totalPrice), 0) FROM Booking b WHERE b.status IN :statuses")
     BigDecimal sumTotalPriceByStatuses(@Param("statuses") Collection<BookingStatus> statuses);

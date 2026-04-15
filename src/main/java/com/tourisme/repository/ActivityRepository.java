@@ -24,10 +24,10 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     boolean existsBySlug(String slug);
     
     @EntityGraph(attributePaths = {"destination"})
-    Page<Activity> findByFeaturedTrueAndActiveTrue(Pageable pageable);
+    Page<Activity> findByFeaturedTrueAndActiveTrueOrderByDisplayOrderAscCreatedAtDesc(Pageable pageable);
     
     @EntityGraph(attributePaths = {"destination"})
-    Page<Activity> findByActiveTrue(Pageable pageable);
+    Page<Activity> findByActiveTrueOrderByDisplayOrderAscCreatedAtDesc(Pageable pageable);
     Page<Activity> findByDestinationId(Long destinationId, Pageable pageable);
     Page<Activity> findByCategory(String category, Pageable pageable);
     
@@ -39,7 +39,8 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
            "AND (:maxPrice IS NULL OR a.price <= :maxPrice) " +
            "AND (:minRating IS NULL OR a.ratingAverage >= :minRating) " +
            "AND (:difficulty IS NULL OR a.difficultyLevel = :difficulty) " +
-           "AND (:featured IS NULL OR a.featured = :featured)")
+           "AND (:featured IS NULL OR a.featured = :featured) " +
+           "ORDER BY a.displayOrder ASC, a.createdAt DESC")
     Page<Activity> findWithFilters(
         @Param("destinationId") Long destinationId,
         @Param("category") String category,
@@ -55,8 +56,12 @@ public interface ActivityRepository extends JpaRepository<Activity, Long> {
     @Query("SELECT a FROM Activity a WHERE a.active = true " +
            "AND (LOWER(a.title) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
            "OR LOWER(a.shortDescription) LIKE LOWER(CONCAT('%', :keyword, '%')) " +
-           "OR LOWER(a.fullDescription) LIKE LOWER(CONCAT('%', :keyword, '%')))")
+           "OR LOWER(a.fullDescription) LIKE LOWER(CONCAT('%', :keyword, '%'))) " +
+           "ORDER BY a.displayOrder ASC, a.createdAt DESC")
     Page<Activity> search(@Param("keyword") String keyword, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"destination"})
+    Page<Activity> findAllByOrderByDisplayOrderAscCreatedAtDesc(Pageable pageable);
     
     @Query("SELECT DISTINCT a.category FROM Activity a WHERE a.category IS NOT NULL AND a.category != '' ORDER BY a.category")
     List<String> findDistinctCategories();

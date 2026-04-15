@@ -59,6 +59,11 @@ public class Booking {
     
     @Column(columnDefinition = "TEXT")
     private String specialRequest;
+
+    /** Admin-only flag to hide a booking from the admin list without deleting it. */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean hidden = false;
     
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

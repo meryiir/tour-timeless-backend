@@ -1,6 +1,7 @@
 package com.tourisme.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -52,6 +53,30 @@ public class GlobalExceptionHandler {
                 .status(HttpStatus.CONFLICT.value())
                 .error("Duplicate Resource")
                 .message(ex.getMessage())
+                .path(request.getRequestURI())
+                .build();
+        return new ResponseEntity<>(error, HttpStatus.CONFLICT);
+    }
+
+    /**
+     * Prevent leaking SQL / constraint details to clients (e.g. duplicate PK after restores).
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolation(
+            DataIntegrityViolationException ex, HttpServletRequest request) {
+        String msg = "Request could not be completed due to a data constraint.";
+        String raw = ex.getMostSpecificCause() != null ? ex.getMostSpecificCause().getMessage() : ex.getMessage();
+        if (raw != null) {
+            String lower = raw.toLowerCase();
+            if (lower.contains("bookings_pkey") || lower.contains("booking_reference")) {
+                msg = "Booking could not be created. Please try again.";
+            }
+        }
+        ErrorResponse error = ErrorResponse.builder()
+                .timestamp(LocalDateTime.now())
+                .status(HttpStatus.CONFLICT.value())
+                .error("Conflict")
+                .message(msg)
                 .path(request.getRequestURI())
                 .build();
         return new ResponseEntity<>(error, HttpStatus.CONFLICT);

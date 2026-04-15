@@ -82,6 +82,13 @@ public class Activity {
     @Column(nullable = false)
     @Builder.Default
     private Boolean featured = false;
+
+    /**
+     * Lower values appear first in public listings. Default keeps normal tours unordered among themselves.
+     */
+    @Column(name = "display_order", nullable = false)
+    @Builder.Default
+    private Integer displayOrder = 1000;
     
     @Column(nullable = false)
     @Builder.Default

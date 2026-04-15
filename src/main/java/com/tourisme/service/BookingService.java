@@ -33,6 +33,7 @@ public class BookingService {
     private final ActivityRepository activityRepository;
     private final BookingMapper bookingMapper;
     private final UserNotificationService userNotificationService;
+    private final BookingNotificationMailService bookingNotificationMailService;
     
     private User getCurrentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -79,6 +80,7 @@ public class BookingService {
         
         booking = bookingRepository.save(booking);
         userNotificationService.notifyAdminsNewBooking(booking);
+        bookingNotificationMailService.sendNewBookingNotificationEmail(booking);
         return bookingMapper.toResponse(booking);
     }
     
@@ -105,7 +107,15 @@ public class BookingService {
     
     @Transactional(readOnly = true)
     public Page<BookingResponse> getAllBookings(Pageable pageable) {
-        return bookingRepository.findAll(pageable).map(bookingMapper::toResponse);
+        return getAllBookings(pageable, false);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<BookingResponse> getAllBookings(Pageable pageable, boolean includeHidden) {
+        if (includeHidden) {
+            return bookingRepository.findAll(pageable).map(bookingMapper::toResponse);
+        }
+        return bookingRepository.findByHiddenFalse(pageable).map(bookingMapper::toResponse);
     }
     
     @Transactional(readOnly = true)
@@ -128,6 +138,15 @@ public class BookingService {
         if (previous != status) {
             userNotificationService.notifyBookingStatus(booking.getUser(), booking, status);
         }
+        return bookingMapper.toResponse(booking);
+    }
+
+    @Transactional
+    public BookingResponse updateBookingHidden(Long id, boolean hidden) {
+        Booking booking = bookingRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + id));
+        booking.setHidden(hidden);
+        booking = bookingRepository.save(booking);
         return bookingMapper.toResponse(booking);
     }
     

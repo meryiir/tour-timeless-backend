@@ -40,7 +40,7 @@ public class ActivityService {
     
     @Transactional(readOnly = true)
     public Page<ActivityResponse> getAllActivities(Pageable pageable, String languageCode) {
-        return activityRepository.findByActiveTrue(pageable)
+        return activityRepository.findByActiveTrueOrderByDisplayOrderAscCreatedAtDesc(pageable)
                 .map(activity -> {
                     // Initialize all lazy collections to avoid LazyInitializationException
                     Hibernate.initialize(activity.getGalleryImages());
@@ -104,7 +104,7 @@ public class ActivityService {
     
     @Transactional(readOnly = true)
     public Page<ActivityResponse> getFeaturedActivities(Pageable pageable, String languageCode) {
-        return activityRepository.findByFeaturedTrueAndActiveTrue(pageable)
+        return activityRepository.findByFeaturedTrueAndActiveTrueOrderByDisplayOrderAscCreatedAtDesc(pageable)
                 .map(activity -> {
                     Hibernate.initialize(activity.getGalleryImages());
                     Hibernate.initialize(activity.getIncludedItems());
@@ -185,6 +185,7 @@ public class ActivityService {
                 .difficultyLevel(request.getDifficultyLevel())
                 .tourType(request.getTourType() != null ? request.getTourType() : Activity.TourType.SHARED)
                 .featured(request.getFeatured() != null ? request.getFeatured() : false)
+                .displayOrder(request.getDisplayOrder() != null ? request.getDisplayOrder() : 1000)
                 .active(request.getActive() != null ? request.getActive() : true)
                 .maxGroupSize(request.getMaxGroupSize() != null ? request.getMaxGroupSize() : 20)
                 .availableSlots(request.getAvailableSlots() != null ? request.getAvailableSlots() : 50)
@@ -239,6 +240,7 @@ public class ActivityService {
         if (request.getDifficultyLevel() != null) activity.setDifficultyLevel(request.getDifficultyLevel());
         if (request.getTourType() != null) activity.setTourType(request.getTourType());
         if (request.getFeatured() != null) activity.setFeatured(request.getFeatured());
+        if (request.getDisplayOrder() != null) activity.setDisplayOrder(request.getDisplayOrder());
         if (request.getActive() != null) activity.setActive(request.getActive());
         if (request.getMaxGroupSize() != null) activity.setMaxGroupSize(request.getMaxGroupSize());
         if (request.getAvailableSlots() != null) activity.setAvailableSlots(request.getAvailableSlots());
@@ -329,7 +331,7 @@ public class ActivityService {
     // Admin methods - don't filter by active status
     @Transactional(readOnly = true)
     public Page<ActivityResponse> getAllActivitiesForAdmin(Pageable pageable, String languageCode) {
-        return activityRepository.findAll(pageable)
+        return activityRepository.findAllByOrderByDisplayOrderAscCreatedAtDesc(pageable)
                 .map(activity -> {
                     // Initialize all lazy collections to avoid LazyInitializationException
                     Hibernate.initialize(activity.getGalleryImages());

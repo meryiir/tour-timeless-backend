@@ -12,6 +12,16 @@ spring:
     hibernate:
       ddl-auto: none
 
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+server:
+  # Respect X-Forwarded-* from nginx so absolute URLs + redirects use HTTPS.
+  forward-headers-strategy: framework
+
 app:
   seeding:
     run-on-startup: false

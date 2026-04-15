@@ -49,6 +49,9 @@ public class ActivityRequest {
     private Long destinationId;
     
     private Boolean featured;
+
+    /** Lower = earlier in listings; omit for default (1000). */
+    private Integer displayOrder;
     
     private Boolean active;
     

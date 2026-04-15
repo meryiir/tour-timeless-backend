@@ -75,6 +75,10 @@ app:
     mail-from-name: ${MAIL_FROM_NAME:Tour in Morocco}
     notification-to: ${CONTACT_INBOX_EMAIL:}
 
+  # New bookings email notification (optional; defaults to tourinmorocco.contact@gmail.com).
+  booking:
+    notification-to: ${BOOKING_INBOX_EMAIL:tourinmorocco.contact@gmail.com}
+
   # Startup seeding: insert-only / empty-DB paths by default — your PostgreSQL data is not reset on restart.
   seeding:
     # When false, DataSeeder does not run at all (strongest guarantee nothing touches the DB on startup).

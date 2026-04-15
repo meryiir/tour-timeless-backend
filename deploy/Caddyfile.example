@@ -8,6 +8,10 @@
 # Example upstream when compose project is "deploy" (container name tourisme-frontend):
 #   reverse_proxy tourisme-frontend:80
 
-morocco-mosaic.com, www.morocco-mosaic.com {
+www.morocco-mosaic.com {
+    redir https://morocco-mosaic.com{uri} permanent
+}
+
+morocco-mosaic.com {
     reverse_proxy localhost:80
 }

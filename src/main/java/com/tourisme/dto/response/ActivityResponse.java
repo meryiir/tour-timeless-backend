@@ -34,6 +34,7 @@ public class ActivityResponse {
     private BigDecimal ratingAverage;
     private Integer reviewCount;
     private Boolean featured;
+    private Integer displayOrder;
     private Boolean active;
     private Integer maxGroupSize;
     private Integer availableSlots;
