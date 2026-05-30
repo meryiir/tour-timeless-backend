@@ -2973,7 +2973,7 @@ public class DataSeeder implements CommandLineRunner {
                 .siteName("Tour Timeless")
                 .logoUrl("https://via.placeholder.com/200x60?text=Tour+Timeless")
                 .contactEmail("tourinmorocco.contact@gmail.com")
-                .contactPhone("+212721104528")
+                .contactPhone("+16086504232 | +212721104528")
                 .address("Rue Erraouda, 40000 Marrakesh Morocco")
                 .facebookUrl("https://facebook.com/tourtimeless")
                 .instagramUrl("https://instagram.com/tourtimeless")
@@ -2981,7 +2981,7 @@ public class DataSeeder implements CommandLineRunner {
                 .youtubeUrl("https://youtube.com/tourtimeless")
                 .bannerTitle("Discover Morocco's Hidden Gems")
                 .bannerSubtitle("Experience unforgettable adventures in the heart of North Africa")
-                .contactPhonesJson("[{\"display\":\"+212721104528\",\"tel\":\"+212721104528\"}]")
+                .contactPhonesJson("[{\"display\":\"+16086504232\",\"tel\":\"+16086504232\"},{\"display\":\"+212721104528\",\"tel\":\"+212721104528\"}]")
                 .businessHours("Mon–Fri: 9:00–18:00 (Morocco time)")
                 .build();
         settingsRepository.save(settings);
