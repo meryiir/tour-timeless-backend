@@ -164,8 +164,9 @@ public class AdminController {
     @GetMapping("/bookings")
     public ResponseEntity<Page<BookingResponse>> getAllBookings(
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable,
-            @RequestParam(required = false, defaultValue = "false") boolean includeHidden) {
-        return ResponseEntity.ok(bookingService.getAllBookings(pageable, includeHidden));
+            @RequestParam(required = false, defaultValue = "false") boolean includeHidden,
+            @RequestParam(required = false, defaultValue = "false") boolean cancelledOnly) {
+        return ResponseEntity.ok(bookingService.getAllBookings(pageable, includeHidden, cancelledOnly));
     }
     
     @GetMapping("/bookings/{id}")

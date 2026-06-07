@@ -22,6 +22,18 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     Page<Booking> findByStatus(BookingStatus status, Pageable pageable);
     Page<Booking> findByHiddenFalse(Pageable pageable);
 
+    @Query("SELECT b FROM Booking b WHERE b.hidden = false AND b.status <> :cancelledStatus")
+    Page<Booking> findVisibleActive(@Param("cancelledStatus") BookingStatus cancelledStatus, Pageable pageable);
+
+    @Query("SELECT b FROM Booking b WHERE b.status <> :cancelledStatus")
+    Page<Booking> findAllActive(@Param("cancelledStatus") BookingStatus cancelledStatus, Pageable pageable);
+
+    @Query("SELECT b FROM Booking b WHERE b.hidden = false AND b.status = :cancelledStatus")
+    Page<Booking> findVisibleCancelled(@Param("cancelledStatus") BookingStatus cancelledStatus, Pageable pageable);
+
+    @Query("SELECT b FROM Booking b WHERE b.status = :cancelledStatus")
+    Page<Booking> findAllCancelled(@Param("cancelledStatus") BookingStatus cancelledStatus, Pageable pageable);
+
     @Query("SELECT COALESCE(SUM(b.totalPrice), 0) FROM Booking b WHERE b.status IN :statuses")
     BigDecimal sumTotalPriceByStatuses(@Param("statuses") Collection<BookingStatus> statuses);
 

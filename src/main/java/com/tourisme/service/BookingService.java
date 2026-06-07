@@ -106,16 +106,24 @@ public class BookingService {
     }
     
     @Transactional(readOnly = true)
-    public Page<BookingResponse> getAllBookings(Pageable pageable) {
-        return getAllBookings(pageable, false);
+    public Page<BookingResponse> getAllBookings(Pageable pageable, boolean includeHidden) {
+        return getAllBookings(pageable, includeHidden, false);
     }
 
     @Transactional(readOnly = true)
-    public Page<BookingResponse> getAllBookings(Pageable pageable, boolean includeHidden) {
-        if (includeHidden) {
-            return bookingRepository.findAll(pageable).map(bookingMapper::toResponse);
+    public Page<BookingResponse> getAllBookings(Pageable pageable, boolean includeHidden, boolean cancelledOnly) {
+        Booking.BookingStatus cancelled = Booking.BookingStatus.CANCELLED;
+        Page<Booking> page;
+        if (cancelledOnly) {
+            page = includeHidden
+                    ? bookingRepository.findAllCancelled(cancelled, pageable)
+                    : bookingRepository.findVisibleCancelled(cancelled, pageable);
+        } else {
+            page = includeHidden
+                    ? bookingRepository.findAllActive(cancelled, pageable)
+                    : bookingRepository.findVisibleActive(cancelled, pageable);
         }
-        return bookingRepository.findByHiddenFalse(pageable).map(bookingMapper::toResponse);
+        return page.map(bookingMapper::toResponse);
     }
     
     @Transactional(readOnly = true)
@@ -127,6 +135,27 @@ public class BookingService {
                 .map(bookingMapper::toResponse);
     }
     
+    @Transactional
+    public BookingResponse cancelMyBooking(Long id) {
+        User user = getCurrentUser();
+        Booking booking = bookingRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Booking not found with id: " + id));
+
+        if (!booking.getUser().getId().equals(user.getId())) {
+            throw new BadRequestException("You don't have access to this booking");
+        }
+
+        Booking.BookingStatus status = booking.getStatus();
+        if (status == Booking.BookingStatus.CANCELLED) {
+            throw new BadRequestException("This booking is already cancelled");
+        }
+        if (status == Booking.BookingStatus.COMPLETED) {
+            throw new BadRequestException("Completed bookings cannot be cancelled");
+        }
+
+        return updateBookingStatus(id, Booking.BookingStatus.CANCELLED);
+    }
+
     @Transactional
     public BookingResponse updateBookingStatus(Long id, Booking.BookingStatus status) {
         Booking booking = bookingRepository.findById(id)
