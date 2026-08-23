@@ -95,7 +95,7 @@ public class SeoController {
     @GetMapping(value = "/robots.txt", produces = MediaType.TEXT_PLAIN_VALUE)
     public String robots() {
         String base = siteUrl.replaceAll("/$", "");
-        String sitemapUrl = base + "/api/seo/sitemap.xml";
+        String sitemapUrl = base + "/sitemap.xml";
         return String.join("\n",
                 "User-agent: *",
                 "Allow: /",
@@ -104,6 +104,10 @@ public class SeoController {
                 "Disallow: /register",
                 "Disallow: /forgot-password",
                 "Disallow: /profile",
+                "Disallow: /booking-success",
+                "Disallow: /activities?search=",
+                "Disallow: /activities?destination=",
+                "Disallow: /destinations?search=",
                 "",
                 "Sitemap: " + sitemapUrl,
                 ""

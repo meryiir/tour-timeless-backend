@@ -51,6 +51,14 @@ public class Booking {
     
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal totalPrice;
+
+    /** Client selection: {@code shared} or {@code private}. */
+    @Column(length = 20)
+    private String tourType;
+
+    /** Client selection: {@code standard} or {@code luxury}. */
+    @Column(length = 20)
+    private String comfortLevel;
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)

@@ -39,7 +39,12 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # Fresh empty DB: Hibernate creates schema + DataSeeder fills catalog.
+      # Set SPRING_FLYWAY_ENABLED=true only after restoring a pg dump that matches migrations.
       SPRING_PROFILES_ACTIVE: docker
+      SPRING_FLYWAY_ENABLED: "false"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      APP_SEEDING_RUN_ON_STARTUP: ${SEED_RUN_ON_STARTUP:-false}
       DB_URL: jdbc:postgresql://postgres:5432/tourisme
       DB_USERNAME: postgres
       DB_PASSWORD: ${DB_PASSWORD}
@@ -48,6 +53,13 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       SITE_PUBLIC_URL: ${SITE_PUBLIC_URL}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      MAIL_HOST: ${MAIL_HOST:-}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Mosaic Morocco}
+      BOOKING_INBOX_EMAIL: ${BOOKING_INBOX_EMAIL:-}
+      CONTACT_INBOX_EMAIL: ${CONTACT_INBOX_EMAIL:-}
       UPLOAD_DIR: /app/uploads
       PG_DUMP_PATH: /usr/bin/pg_dump
     volumes:

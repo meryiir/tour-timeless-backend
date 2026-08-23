@@ -17,9 +17,13 @@ import java.util.UUID;
 public class FileStorageService {
     
     private final Path uploadDir;
+    private final ImageOptimizationService imageOptimizationService;
     
-    public FileStorageService(@Value("${app.upload.dir:uploads}") String uploadDir) {
+    public FileStorageService(
+            @Value("${app.upload.dir:uploads}") String uploadDir,
+            ImageOptimizationService imageOptimizationService) {
         this.uploadDir = Paths.get(uploadDir).toAbsolutePath().normalize();
+        this.imageOptimizationService = imageOptimizationService;
         try {
             Files.createDirectories(this.uploadDir);
             log.info("Upload directory created: {}", this.uploadDir);
@@ -58,6 +62,7 @@ public class FileStorageService {
         
         // Copy file to target location
         Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+        filename = imageOptimizationService.optimizeUploadedFile(targetLocation);
         
         log.info("File stored successfully: {}", filename);
         return filename;

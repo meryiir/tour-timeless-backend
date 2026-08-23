@@ -23,6 +23,8 @@ public class BookingResponse {
     private LocalDate travelDate;
     private Integer numberOfPeople;
     private BigDecimal totalPrice;
+    private String tourType;
+    private String comfortLevel;
     private BookingStatus status;
     private String specialRequest;
     private Boolean hidden;

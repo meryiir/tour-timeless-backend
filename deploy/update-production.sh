@@ -22,5 +22,15 @@ fi
 echo "Rebuilding and restarting stack..."
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 
+for SEED_DIR in "$SCRIPT_DIR/seed-images/12-days-in-morocco" "$SCRIPT_DIR/seed-images/destinations"; do
+  if [[ -d "$SEED_DIR" ]]; then
+    echo "Syncing seed images from $(basename "$SEED_DIR") to backend uploads volume..."
+    for f in "$SEED_DIR"/*; do
+      [[ -f "$f" ]] || continue
+      docker cp "$f" tourisme-backend:/app/uploads/$(basename "$f")
+    done
+  fi
+done
+
 echo "Done. Flyway runs on backend start; verify:"
 echo "  curl -s https://morocco-mosaic.com/api/settings?lang=en | grep contactPhone"

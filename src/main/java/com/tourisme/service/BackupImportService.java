@@ -314,6 +314,8 @@ public class BackupImportService {
                         .travelDate(parseDate(bm.get("travelDate")))
                         .numberOfPeople(toInt(bm.get("numberOfPeople"), 1))
                         .totalPrice(total)
+                        .tourType(str(bm.get("tourType")))
+                        .comfortLevel(str(bm.get("comfortLevel")))
                         .status(parseEnum(bm.get("status"), Booking.BookingStatus.class, Booking.BookingStatus.PENDING))
                         .specialRequest(str(bm.get("specialRequest")))
                         .createdAt(parseDateTime(bm.get("createdAt")))

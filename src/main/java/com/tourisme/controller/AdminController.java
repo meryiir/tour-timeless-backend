@@ -16,6 +16,7 @@ import com.tourisme.service.CustomTripRequestService;
 import com.tourisme.service.DashboardService;
 import com.tourisme.service.DestinationService;
 import com.tourisme.service.FileStorageService;
+import com.tourisme.service.ImageOptimizationService;
 import com.tourisme.service.PostgresDataDumpService;
 import com.tourisme.service.ReviewService;
 import com.tourisme.service.SettingsService;
@@ -53,6 +54,7 @@ public class AdminController {
     private final SettingsService settingsService;
     private final DashboardService dashboardService;
     private final FileStorageService fileStorageService;
+    private final ImageOptimizationService imageOptimizationService;
     private final BackupService backupService;
     private final BackupImportService backupImportService;
     private final PostgresDataDumpService postgresDataDumpService;
@@ -355,5 +357,18 @@ public class AdminController {
             e.printStackTrace(); // Log the full stack trace
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
         }
+    }
+
+    @PostMapping("/uploads/optimize-all")
+    public ResponseEntity<Map<String, Object>> optimizeAllUploads() {
+        ImageOptimizationService.OptimizationResult result = imageOptimizationService.optimizeAllUploads();
+        Map<String, Object> body = new HashMap<>();
+        body.put("filesProcessed", result.filesProcessed());
+        body.put("filesOptimized", result.filesOptimized());
+        body.put("referencesUpdated", result.referencesUpdated());
+        body.put("bytesBefore", result.bytesBefore());
+        body.put("bytesAfter", result.bytesAfter());
+        body.put("bytesSaved", result.bytesSaved());
+        return ResponseEntity.ok(body);
     }
 }

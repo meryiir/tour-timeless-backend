@@ -245,6 +245,8 @@ public class BackupService {
         m.put("travelDate", b.getTravelDate());
         m.put("numberOfPeople", b.getNumberOfPeople());
         m.put("totalPrice", b.getTotalPrice());
+        m.put("tourType", b.getTourType());
+        m.put("comfortLevel", b.getComfortLevel());
         m.put("status", b.getStatus().name());
         m.put("specialRequest", b.getSpecialRequest());
         m.put("createdAt", b.getCreatedAt());

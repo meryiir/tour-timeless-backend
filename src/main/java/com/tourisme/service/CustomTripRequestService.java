@@ -18,6 +18,7 @@ public class CustomTripRequestService {
 
     private final CustomTripRequestRepository customTripRequestRepository;
     private final UserNotificationService userNotificationService;
+    private final CustomTripRequestMailService customTripRequestMailService;
 
     @Transactional
     public CustomTripRequestResponse create(CustomTripRequestCreateRequest request) {
@@ -36,6 +37,8 @@ public class CustomTripRequestService {
         );
 
         userNotificationService.notifyAdminsCustomTripRequest(saved);
+        customTripRequestMailService.sendAdminNotificationEmail(saved);
+        customTripRequestMailService.sendCustomerConfirmationEmail(saved);
         return toResponse(saved);
     }
 

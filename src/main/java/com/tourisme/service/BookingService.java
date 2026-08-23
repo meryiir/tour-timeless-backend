@@ -74,6 +74,8 @@ public class BookingService {
                 .travelDate(request.getTravelDate())
                 .numberOfPeople(request.getNumberOfPeople())
                 .totalPrice(totalPrice)
+                .tourType(normalizeTourType(request.getTourType()))
+                .comfortLevel(normalizeComfortLevel(request.getComfortLevel()))
                 .status(Booking.BookingStatus.PENDING)
                 .specialRequest(request.getSpecialRequest())
                 .build();
@@ -81,6 +83,7 @@ public class BookingService {
         booking = bookingRepository.save(booking);
         userNotificationService.notifyAdminsNewBooking(booking);
         bookingNotificationMailService.sendNewBookingNotificationEmail(booking);
+        bookingNotificationMailService.sendCustomerBookingConfirmationEmail(booking);
         return bookingMapper.toResponse(booking);
     }
     
@@ -224,5 +227,19 @@ public class BookingService {
             }
         }
         return perPerson.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private static String normalizeTourType(String tourType) {
+        if (tourType == null || tourType.isBlank()) {
+            return "shared";
+        }
+        return tourType.trim().toLowerCase();
+    }
+
+    private static String normalizeComfortLevel(String comfortLevel) {
+        if (comfortLevel == null || comfortLevel.isBlank()) {
+            return "standard";
+        }
+        return comfortLevel.trim().toLowerCase();
     }
 }

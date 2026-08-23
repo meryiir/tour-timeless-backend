@@ -1430,12 +1430,26 @@ public class DataSeeder implements CommandLineRunner {
         ));
 
         Optional<Activity> existing = activityRepository.findBySlug(slug);
-        Activity activity;
         if (existing.isPresent()) {
-            activity = existing.get();
-        } else {
-            activity = Activity.builder().slug(slug).build();
+            Activity activity = existing.get();
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !"Sahara Desert".equals(activity.getDestination().getName()))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            System.out.println("12-day Morocco tour already exists — preserving admin data (images, descriptions, prices).");
+            return;
         }
+
+        Activity activity = Activity.builder().slug(slug).build();
 
         activity.setTitle(title);
         activity.setShortDescription(shortDescription);
@@ -1456,13 +1470,20 @@ public class DataSeeder implements CommandLineRunner {
         activity.setActive(true);
         activity.setMaxGroupSize(12);
         activity.setAvailableSlots(24);
-        activity.setImageUrl("https://images.unsplash.com/photo-1569383746724-4f2c9b14e68b?w=1200");
+        activity.setImageUrl("/uploads/12-days-casablanca.png");
         activity.setGalleryImages(new ArrayList<>(Arrays.asList(
-                "https://images.unsplash.com/photo-1569383746724-4f2c9b14e68b?w=1200",
-                "https://images.unsplash.com/photo-1516026672322-bc52d61a55d5?w=1200",
-                "https://images.unsplash.com/photo-1509316785289-025f5b846b35?w=1200",
-                "https://images.unsplash.com/photo-1489749798305-4fea3ae63d43?w=1200",
-                "https://images.unsplash.com/photo-1539025638867-da25744e7a1e?w=1200"
+                "/uploads/12-days-chefchaouen.png",
+                "/uploads/12-days-fes.png",
+                "/uploads/12-days-fes-2.png",
+                "/uploads/12-days-sahara-1.jpeg",
+                "/uploads/12-days-sahara-2.jpeg",
+                "/uploads/12-days-sahara-3.jpeg",
+                "/uploads/12-days-todgha-gorge.png",
+                "/uploads/12-days-dades-gorge.jpg",
+                "/uploads/12-days-ait-ben-haddou.png",
+                "/uploads/12-days-essaouira.png",
+                "/uploads/12-days-marrakech.png",
+                "/uploads/12-days-marrakech-2.png"
         )));
         activity.setAvailability("On request — private departures");
         activity.setDepartureLocation("Casablanca Airport");
@@ -1556,7 +1577,26 @@ public class DataSeeder implements CommandLineRunner {
         ));
 
         Optional<Activity> existing = activityRepository.findBySlug(slug);
-        Activity activity = existing.orElseGet(() -> Activity.builder().slug(slug).build());
+        if (existing.isPresent()) {
+            Activity activity = existing.get();
+            boolean needsSave = false;
+            if (relinkSaharaActivities
+                    && (activity.getDestination() == null || !"Sahara Desert".equals(activity.getDestination().getName()))) {
+                activity.setDestination(saharaDesert);
+                needsSave = true;
+            }
+            if (reactivateAllActivities && (activity.getActive() == null || !activity.getActive())) {
+                activity.setActive(true);
+                needsSave = true;
+            }
+            if (needsSave) {
+                activityRepository.save(activity);
+            }
+            System.out.println("7-day Casablanca→Marrakech tour already exists — preserving admin data (images, descriptions, prices).");
+            return;
+        }
+
+        Activity activity = Activity.builder().slug(slug).build();
 
         activity.setTitle(title);
         activity.setShortDescription(shortDescription);
@@ -2973,7 +3013,7 @@ public class DataSeeder implements CommandLineRunner {
                 .siteName("Tour Timeless")
                 .logoUrl("https://via.placeholder.com/200x60?text=Tour+Timeless")
                 .contactEmail("tourinmorocco.contact@gmail.com")
-                .contactPhone("+16086504232 | +212721104528")
+                .contactPhone("+447445473022 | +212721104528")
                 .address("Rue Erraouda, 40000 Marrakesh Morocco")
                 .facebookUrl("https://facebook.com/tourtimeless")
                 .instagramUrl("https://instagram.com/tourtimeless")
@@ -2981,7 +3021,7 @@ public class DataSeeder implements CommandLineRunner {
                 .youtubeUrl("https://youtube.com/tourtimeless")
                 .bannerTitle("Discover Morocco's Hidden Gems")
                 .bannerSubtitle("Experience unforgettable adventures in the heart of North Africa")
-                .contactPhonesJson("[{\"display\":\"+16086504232\",\"tel\":\"+16086504232\"},{\"display\":\"+212721104528\",\"tel\":\"+212721104528\"}]")
+                .contactPhonesJson("[{\"display\":\"+447445473022\",\"tel\":\"+447445473022\"},{\"display\":\"+212721104528\",\"tel\":\"+212721104528\"}]")
                 .businessHours("Mon–Fri: 9:00–18:00 (Morocco time)")
                 .build();
         settingsRepository.save(settings);

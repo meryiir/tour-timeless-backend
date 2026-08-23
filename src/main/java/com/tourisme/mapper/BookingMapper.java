@@ -26,6 +26,8 @@ public class BookingMapper {
                 .travelDate(booking.getTravelDate())
                 .numberOfPeople(booking.getNumberOfPeople())
                 .totalPrice(booking.getTotalPrice())
+                .tourType(booking.getTourType())
+                .comfortLevel(booking.getComfortLevel())
                 .status(booking.getStatus())
                 .specialRequest(booking.getSpecialRequest())
                 .hidden(Boolean.TRUE.equals(booking.getHidden()))

@@ -41,6 +41,7 @@ docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 
 - **Postgres** is not published to the internet; only the **frontend** container exposes `HTTP_PORT` (default 80).
 - Uploaded images live in the Docker volume `uploads_data`; back it up with your DB.
+- Bundled photos live under `deploy/seed-images/` (`12-days-in-morocco/`, compressed `destinations/`). After `git pull`, run `./update-production.sh` — it copies them into the backend container’s `/app/uploads` folder.
 
 ## 5. HTTPS (optional)
 
